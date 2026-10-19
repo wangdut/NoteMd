@@ -1,11 +1,11 @@
-﻿import { spawn } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { chromium } from '@playwright/test'
 await fs.mkdir('test-results/portable',{recursive:true})
 const root=await fs.mkdtemp(path.resolve('test-results/portable/run-'))
 const env={...process.env,NOTEMD_USER_DATA:path.join(root,'profile'),NOTEMD_LIBRARY_PATH:path.join(root,'library'),TEMP:root,TMP:root};delete env.ELECTRON_RUN_AS_NODE
-const child=spawn(path.resolve('release/NoteMd-0.1.0/NoteMd-0.1.0-x64.exe'),['--remote-debugging-port=0'],{env,windowsHide:true,stdio:'ignore'})
+const child=spawn(path.resolve('release/NoteMd-0.2.0/NoteMd-0.2.0-x64.exe'),['--remote-debugging-port=0'],{env,windowsHide:true,stdio:'ignore'})
 let port
 for(let i=0;i<60;i++){try{port=(await fs.readFile(path.join(root,'profile','DevToolsActivePort'),'utf8')).split('\n')[0];break}catch{}await new Promise(r=>setTimeout(r,500))}
 if(!port)throw new Error('Portable app did not create a debugging endpoint')
