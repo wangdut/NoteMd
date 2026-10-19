@@ -1,0 +1,10 @@
+node_modules/
+dist/
+release/
+vendor/
+artifacts/
+.test-data/
+*.log
+*.tsbuildinfo
+.env*
+!.env.example
