@@ -35,3 +35,13 @@
 
 - 单文件便携包 `release/NoteMd-0.1.0/NoteMd-0.1.0-x64.exe` 已启动并完成新建、输入、保存与退出冒烟验证。
 - GitHub 仓库已创建：`https://github.com/wangdut/NoteMd`；代码按本地阶段提交后统一推送。
+
+## GitHub 状态
+
+仓库 `https://github.com/wangdut/NoteMd` 已创建并配置为 origin。2026-10-20 最后统一推送两次，分别遇到连接重置和 github.com:443 连接失败，未完成上传。不继续阻塞本地交付。所有开发阶段已本地 commit，工作树应保持干净。网络恢复后在 NoteMd 目录执行：
+
+```powershell
+git push -u origin main
+```
+
+Git 不包含私人文档、恢复草稿、依赖、构建包、下载的上游仓库或凭证。
