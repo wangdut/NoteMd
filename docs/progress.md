@@ -32,3 +32,6 @@
 - 目录发行版 `release/NoteMd-0.1.0/win-unpacked/NoteMd.exe`：已直接启动该 EXE 重跑同一套 4 项桌面测试，全部通过。
 - Windows EXE 资源中的产品名称、版本与原创图标已写入。
 - 便携单文件包与目录版产物均只保留在本项目 release 目录，不进入 Git。
+
+- 单文件便携包 `release/NoteMd-0.1.0/NoteMd-0.1.0-x64.exe` 已启动并完成新建、输入、保存与退出冒烟验证。
+- GitHub 仓库已创建：`https://github.com/wangdut/NoteMd`；代码按本地阶段提交后统一推送。
