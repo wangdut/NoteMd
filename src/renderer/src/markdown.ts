@@ -1,6 +1,7 @@
 import { Marked, Lexer } from 'marked'
 import DOMPurify from 'dompurify'
 import hljs from 'highlight.js/lib/common'
+import katex from 'katex'
 import mathExtension from '../../../third-party/marktext/packages/muya/src/utils/marked/extensions/math'
 import markExtension from '../../../third-party/marktext/packages/muya/src/utils/marked/extensions/mark'
 import superSubscriptExtension from '../../../third-party/marktext/packages/muya/src/utils/marked/extensions/superSubscript'
@@ -8,6 +9,13 @@ import footnoteExtension from '../../../third-party/marktext/packages/muya/src/u
 import { generateGithubSlug } from '../../../third-party/marktext/packages/muya/src/utils/slug'
 
 export const markdown = new Marked({ gfm: true, breaks: false, async: false })
+// Interrupt paragraphs before display equations, including formulas adjacent to prose.
+markdown.use({ extensions: [{
+  name:'displayEquation',level:'block',
+  start(source:string){const match=/(?:^|\n)[ \t]*\$\$/.exec(source);return match?match.index+(match[0].startsWith('\n')?1:0):undefined},
+  tokenizer(source:string){const match=/^[ \t]*\$\$([^$]*(?:\$(?!\$)[^$]*)*)\$\$[ \t]*(?:\n|$)/.exec(source);if(match)return {type:'displayEquation',raw:match[0],text:match[1]!.trim()}},
+  renderer(token){return '<div class="display-equation">'+katex.renderToString(token.text,{displayMode:true,throwOnError:false})+'</div>'},
+}] })
 markdown.use(mathExtension({ useKatexRender: true, throwOnError: false }), markExtension(), superSubscriptExtension(), footnoteExtension(), {
   renderer: { code({ text, lang }) {
     const language = lang?.split(/\s/, 1)[0] ?? ''
@@ -56,6 +64,7 @@ export function renderMarkdown(source: string, allSource = source): string {
   const template = document.createElement('template'); template.innerHTML = clean
   template.content.querySelectorAll<HTMLElement>('[style]').forEach(element => {
     const allowed = ['color', 'background-color']
+    if(element.matches('td,th'))allowed.push('text-align')
     if (element.closest('.katex')) allowed.push('height', 'width', 'min-width', 'top', 'bottom', 'left', 'right', 'margin-left', 'margin-right', 'margin-top', 'padding-left', 'vertical-align', 'font-size', 'border-bottom-width', 'position')
     const styles = allowed.map(key => [key, element.style.getPropertyValue(key)])
     element.removeAttribute('style')

@@ -3,6 +3,24 @@ import { renderMarkdown, resolveImages } from './markdown'
 import { changeTable, parseTable, serializeTable } from './tables'
 export interface NodeSelection { kind: string; from: number; to: number; source: string; row?: number; column?: number }
 const selectedNodes = new WeakMap<EditorView, NodeSelection>()
+const cellRanges = new WeakMap<EditorView, { cell:HTMLTableCellElement; range:Range }>()
+export function rememberCellRange(view:EditorView){
+  const selection=window.getSelection();if(!selection?.rangeCount)return
+  const range=selection.getRangeAt(0);const element=range.commonAncestorContainer instanceof HTMLElement?range.commonAncestorContainer:range.commonAncestorContainer.parentElement
+  const cell=element?.closest<HTMLTableCellElement>('.node-table td,.node-table th');if(cell)cellRanges.set(view,{cell,range:range.cloneRange()})
+}
+export function restoreCellRange(view:EditorView):boolean{
+  const saved=cellRanges.get(view);if(!saved?.cell.isConnected||!selectedNode(view)||selectedNode(view)?.kind!=='table')return false
+  saved.cell.focus();const selection=window.getSelection();selection?.removeAllRanges();selection?.addRange(saved.range);return true
+}
+export function formatCell(view:EditorView,before:string,after=before):boolean{
+  const node=selectedNode(view);if(node?.kind!=='table')return false
+  const data=parseTable(node.source),row=node.row??1,col=node.column??0;const text=data.rows[row]?.[col];if(text===undefined)return true
+  const saved=cellRanges.get(view);let start=0,end=text.length
+  if(saved?.cell.isConnected&&!saved.range.collapsed){const prefix=saved.range.cloneRange();prefix.selectNodeContents(saved.cell);prefix.setEnd(saved.range.startContainer,saved.range.startOffset);const selected=saved.range.toString();const at=text.indexOf(selected,prefix.toString().length);if(at>=0){start=at;end=at+selected.length}}
+  data.rows[row]![col]=text.slice(0,start)+before+text.slice(start,end)+after+text.slice(end)
+  const source=serializeTable(data);(document.activeElement as HTMLElement)?.blur();view.dispatch({changes:{from:node.from,to:node.to,insert:source}});selectedNodes.set(view,{...node,source,to:node.from+source.length});return true
+}
 export function selectedNode(view: EditorView): NodeSelection | undefined {
   const node = selectedNodes.get(view)
   return node && view.state.sliceDoc(node.from, node.to).replaceAll('\r\n', '\n') === node.source ? node : undefined
@@ -31,7 +49,7 @@ export class PreviewWidget extends WidgetType {
     const node = document.createElement(this.kind === 'inline-math' || this.kind === 'image' ? 'span' : 'div')
     node.className = 'live-block markdown-body preview-node node-' + this.kind
     node.dataset.kind = this.kind; node.dataset.from = String(this.from); node.dataset.source = this.source
-    const body = document.createElement('span'); body.className = 'node-body'; body.innerHTML = renderMarkdown(this.source, this.allSource)
+    const body = document.createElement('span'); body.className = 'node-body'; body.innerHTML = renderMarkdown(this.kind==='math'?this.source.replace(/^\s*(?:>\s*)+/gm,''):this.source, this.allSource)
     body.querySelectorAll<HTMLElement>('.katex-error').forEach(error=>{error.textContent='公式语法有误';error.title='点击选中后使用“编辑公式”查看并修正 LaTeX';error.removeAttribute('style');error.classList.add('formula-error')})
     if (this.kind === 'image' || this.kind === 'inline-math') { const p = body.firstElementChild; if (p?.tagName === 'P') p.replaceWith(...p.childNodes) }
     node.append(body); resolveImages(node, this.identifier)
@@ -71,6 +89,7 @@ export class PreviewWidget extends WidgetType {
         view.dispatch({ changes: { from, to: from + source.length, insert: next }, userEvent: 'input' })
         selectedNodes.set(view, { kind: 'table', from, to: from + next.length, source: next, row, column: cell.cellIndex })
       })
+      cell.addEventListener('keyup',()=>rememberCellRange(view));cell.addEventListener('mouseup',()=>rememberCellRange(view));cell.addEventListener('contextmenu',()=>rememberCellRange(view))
       cell.addEventListener('keydown', event => {
         if ((event.ctrlKey || event.metaKey) && ['z','y'].includes(event.key.toLowerCase())) { event.preventDefault(); cell.blur(); requestCommand(view, event.key.toLowerCase() === 'y' || event.shiftKey ? 'redo' : 'undo'); return }
         if (event.key !== 'Tab' && event.key !== 'Enter') return

@@ -1,5 +1,5 @@
 import { EditorState, type Extension } from '@codemirror/state'
-import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
+import { defaultKeymap, history, historyKeymap, indentWithTab, indentLess, indentMore } from '@codemirror/commands'
 import { markdown as markdownLanguage, markdownKeymap } from '@codemirror/lang-markdown'
 import { searchKeymap } from '@codemirror/search'
 import { defaultHighlightStyle, syntaxHighlighting } from '@codemirror/language'
@@ -26,7 +26,7 @@ export function createMarkdownEditor(
       const line=view.state.doc.lineAt(view.state.selection.main.head)
       if(!/^\s*(?:[-+*]|\d+[.)])\s+(?:\[[ xX]\]\s*)?$/.test(line.text))return false
       view.dispatch({changes:{from:line.from,to:line.to,insert:'\n'},selection:{anchor:line.from+1},userEvent:'input'});return true
-    } },...markdownKeymap, ...defaultKeymap, ...historyKeymap, ...searchKeymap, indentWithTab]),
+    } },{key:'Tab',run:view=>/^\s*(?:[-+*]|\d+[.)])\s/.test(view.state.doc.lineAt(view.state.selection.main.head).text)?indentMore(view):false},{key:'Shift-Tab',run:indentLess},...markdownKeymap, ...defaultKeymap, ...historyKeymap, ...searchKeymap, indentWithTab]),
     EditorView.lineWrapping,
     EditorView.updateListener.of(update => {
       if (update.docChanged) {endings.update(update.changes,update.state.doc);onChange(endings.serialize(update.state.doc))}

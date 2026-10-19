@@ -69,7 +69,11 @@ test('table dimensions, editable cells, context operations and tab extension',as
     await cell.click({button:'right'});await page.getByRole('menuitem',{name:'右侧插入列',exact:true}).click();await expect(page.locator('.node-table th')).toHaveCount(5)
     await page.getByRole('textbox',{name:'表格 第2行 第2列'}).click({button:'right'});await page.getByRole('menuitem',{name:'下方插入行',exact:true}).click();await expect(page.locator('.node-table tr')).toHaveCount(5)
     await page.getByRole('textbox',{name:'表格 第5行 第5列'}).click();await page.keyboard.press('Tab');await expect(page.locator('.node-table tr')).toHaveCount(6)
-    await saved(app,page);await command(app,'mode-source');await expect(page.locator('.cm-content')).toContainText('中文单元格');await command(app,'mode-live');await expect(page.locator('.node-table tr')).toHaveCount(6)
+    await page.getByRole('textbox',{name:'表格 第2行 第2列'}).click({button:'right'});await page.getByRole('menuitem',{name:'列居中',exact:true}).click();await expect(page.locator('.node-table tr').nth(1).locator('td').nth(1)).toHaveCSS('text-align','center')
+    await page.getByRole('textbox',{name:'表格 第2行 第2列'}).click({button:'right'});await page.getByRole('menuitem',{name:'字体颜色…',exact:true}).click();await page.getByRole('textbox',{name:'颜色值'}).fill('#2471c8');await page.getByRole('button',{name:'应用',exact:true}).click();await expect(page.locator('.node-table td span[style]')).toHaveCSS('color','rgb(36, 113, 200)')
+    await page.getByRole('textbox',{name:'表格 第3行 第3列'}).click({button:'right'});await page.getByRole('menuitem',{name:'删除当前列',exact:true}).click();await expect(page.locator('.node-table th')).toHaveCount(4)
+    await page.getByRole('textbox',{name:'表格 第3行 第3列'}).click({button:'right'});await page.getByRole('menuitem',{name:'删除当前行',exact:true}).click();await expect(page.locator('.node-table tr')).toHaveCount(5)
+    await saved(app,page);await command(app,'mode-source');await expect(page.locator('.cm-content')).toContainText('中文单元格');await command(app,'mode-live');await expect(page.locator('.node-table tr')).toHaveCount(5)
     expect(errors).toEqual([])
   }finally{await app.close()}
 })
@@ -92,7 +96,7 @@ test('multiline lists, empty item exit, indentation and table undo survive save'
   const {app,page,root,errors}=await launch('甲\n乙\n丙')
   try{
     await page.locator('.cm-content').click();await page.keyboard.press('Control+a');await page.keyboard.press('Control+Shift+7');await saved(app,page);expect(await fs.readFile(path.join(root,'library','交互测试.md'),'utf8')).toBe('1. 甲\n2. 乙\n3. 丙')
-    await page.keyboard.press('Control+End');await page.keyboard.press('Enter');await page.keyboard.press('Enter');await page.keyboard.insertText('退出列表');await saved(app,page);expect(await fs.readFile(path.join(root,'library','交互测试.md'),'utf8')).toContain('3. 丙\n\n退出列表')
+    await page.keyboard.press('Control+End');await page.keyboard.press('Tab');await saved(app,page);expect(await fs.readFile(path.join(root,'library','交互测试.md'),'utf8')).toContain('  3. 丙');await page.keyboard.press('Shift+Tab');await page.keyboard.press('Enter');await page.keyboard.press('Enter');await page.keyboard.insertText('退出列表');await saved(app,page);expect(await fs.readFile(path.join(root,'library','交互测试.md'),'utf8')).toContain('3. 丙\n\n退出列表')
     await command(app,'table');await page.getByRole('button',{name:'应用',exact:true}).click();const cell=page.getByRole('textbox',{name:'表格 第2行 第1列'});await cell.click();await page.keyboard.insertText('撤销测试');await page.waitForTimeout(600);await page.keyboard.insertText('附加');await page.keyboard.press('Control+z');await expect(cell).toHaveText('撤销测试');await saved(app,page);expect(await fs.readFile(path.join(root,'library','交互测试.md'),'utf8')).not.toContain('附加')
     expect(errors).toEqual([])
   }finally{await app.close()}

@@ -15,7 +15,7 @@ import { allCommands, shortcutCommand, commandById } from './commands'
 import { MenuBar, CommandMenu, editorContextCommands, Shortcuts } from './menus'
 import { EditorDialog, type EditorDialogState } from './dialogs'
 import { createTable } from './tables'
-import { clearNode, selectedNode, nodeCommand } from './nodes'
+import { clearNode, selectedNode, nodeCommand, formatCell, restoreCellRange } from './nodes'
 import { markdown } from './markdown'
 
 type MenuState = { x: number; y: number; item: LibraryEntry } | null
@@ -109,7 +109,13 @@ export default function App(): JSX.Element {
     adopt(next,await (isExternal(next)?window.noteMd.openExternal(next):window.noteMd.openNote(next)));await refresh()
   }
   function resizeSidebar(value:number,save=false){const width=Math.max(180,Math.min(520,Math.round(value)));widthRef.current=width;setSidebarWidth(width);if(save)void preference('sidebarWidth',width).catch(report)}
-  function startResize(event:React.PointerEvent<HTMLDivElement>){event.preventDefault();const start=event.clientX, width=widthRef.current;event.currentTarget.setPointerCapture(event.pointerId);const target=event.currentTarget;const move=(e:PointerEvent)=>resizeSidebar(width+e.clientX-start);const end=()=>{target.removeEventListener('pointermove',move);target.removeEventListener('pointerup',end);target.removeEventListener('pointercancel',end);resizeSidebar(widthRef.current,true)};target.addEventListener('pointermove',move);target.addEventListener('pointerup',end);target.addEventListener('pointercancel',end)}
+  function startResize(event:React.PointerEvent<HTMLDivElement>){
+    event.preventDefault();const start=event.clientX,width=widthRef.current
+    document.body.style.cursor='col-resize';document.body.style.userSelect='none'
+    const move=(e:PointerEvent)=>resizeSidebar(width+e.clientX-start)
+    const end=(e:PointerEvent)=>{if(e.type==='pointerup')resizeSidebar(width+e.clientX-start);window.removeEventListener('pointermove',move);window.removeEventListener('pointerup',end);window.removeEventListener('pointercancel',end);document.body.style.cursor='';document.body.style.userSelect='';resizeSidebar(widthRef.current,true)}
+    window.addEventListener('pointermove',move);window.addEventListener('pointerup',end);window.addEventListener('pointercancel',end)
+  }
   async function pasteImages(files: File[]) {
     const current = session.current; const view = editor.current
     if (!current || !view || view.state.readOnly) return
@@ -123,7 +129,7 @@ export default function App(): JSX.Element {
   function format(command: string) {
     const view = editor.current; if (!view || mode === 'read') return
     const wrappers: Record<string, [string, string?, string?]> = { bold: ['**'], italic: ['*'], strike: ['~~'], underline: ['<u>', '</u>'], highlight: ['=='], 'inline-code': ['`', '`', '代码'], link: ['[', '](https://)', '链接文字'], 'math-inline': ['$', '$', 'x^2'], color: ['<span style="color:#d46a45">', '</span>'], superscript: ['^'], subscript: ['~'] }
-    if (wrappers[command]) { const [before, after, placeholder] = wrappers[command]; wrapSelection(view, before!, after, placeholder) }
+    if (wrappers[command]) { const [before, after, placeholder] = wrappers[command]; if(!formatCell(view,before!,after))wrapSelection(view, before!, after, placeholder) }
     else if (/^heading-[1-6]$/.test(command)) insertAtLine(view, '#'.repeat(Number(command.at(-1))) + ' ')
     else if (command === 'paragraph') insertAtLine(view, '')
     else if (command === 'blockquote') insertAtLine(view, '> ')
@@ -144,7 +150,7 @@ export default function App(): JSX.Element {
     else if (['cut','copy','paste','select-all'].includes(command)) {
       if(!view)return; const node=selectedNode(view)
       if(command==='copy'&&node?.kind==='image'){const token=markdown.lexer(node.source)[0] as any;const image=token?.tokens?.find((t:any)=>t.type==='image');if(image)await window.noteMd.copyImage(identifier,image.href);return}
-      view.focus();await window.noteMd.clipboard(command as 'cut'|'copy'|'paste'|'select-all')
+      if(!restoreCellRange(view))view.focus();await window.noteMd.clipboard(command as 'cut'|'copy'|'paste'|'select-all')
     }
     else if (view && (command === 'copy-node' || command === 'copy-image')) {
       const node=selectedNode(view);if(!node)return
@@ -156,7 +162,7 @@ export default function App(): JSX.Element {
     else if (view && mode !== 'read' && (command === 'edit-math' || command === 'edit-image')) {
       const node=selectedNode(view);if(!node)return
       const replace=(text:string)=>{if(editor.current!==view)return;view.dispatch({changes:{from:node.from,to:node.to,insert:text}});clearNode(view);view.focus()}
-      if(command==='edit-math'){const display=node.source.startsWith('$$');setEditorDialog({type:'math',initial:node.source.replace(/^\$\$?\s*|\s*\$\$?$/g,''),apply:value=>replace(display?'$$\n'+value+'\n$$':'$'+value+'$')})}
+      if(command==='edit-math'){const quote=node.source.match(/^([ \t]*(?:>[ \t]*)+)/)?.[0]??'';const clean=node.source.replace(/^[ \t]*(?:>[ \t]*)+/gm,'');const display=clean.trimStart().startsWith('$$');setEditorDialog({type:'math',initial:clean.replace(/^\$\$?\s*|\s*\$\$?$/g,''),apply:value=>{const next=display?'$$\n'+value+'\n$$':'$'+value+'$';replace(quote?next.split('\n').map(line=>quote+line).join('\n'):next)}})}
       else {const token=markdown.lexer(node.source)[0] as any;const image=token?.tokens?.find((t:any)=>t.type==='image');if(image)setEditorDialog({type:'image',initial:image.href,alt:image.text,apply:(value:string,alt?:string)=>replace('!['+(alt??'').replace(/[\[\]]/g,'')+'](<'+value.replace(/[<>\r\n]/g,'')+'>)')})}
     }
     else if (view && mode !== 'read' && command === 'table') setEditorDialog({type:'table',apply:(rows:string,columns?:string)=>{if(editor.current===view)insertBlock(view,createTable(Number(rows),Number(columns)))}})
@@ -172,7 +178,7 @@ export default function App(): JSX.Element {
       if (images.length) { const result = await window.noteMd.importImages(session.current.identifier, session.current.content, images); insertText(editor.current, '\n' + result.markdown + '\n'); await flush() }
     }
     else if (command === 'color' && editor.current && mode !== 'read') {
-      const target=editor.current;setEditorDialog({type:'color',apply:color=>{if(editor.current===target)wrapSelection(target,'<span style="color:'+color+'">','</span>')}})
+      const target=editor.current;setEditorDialog({type:'color',apply:color=>{if(editor.current===target&&!formatCell(target,'<span style="color:'+color+'">','</span>'))wrapSelection(target,'<span style="color:'+color+'">','</span>')}})
     }
     else if (command === 'choose-library') {
       await flush(); const next = await window.noteMd.chooseLibrary()

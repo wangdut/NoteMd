@@ -3,6 +3,12 @@ import { describe, expect, it } from 'vitest'
 import { blocks, listHeadings, renderMarkdown, words } from '../src/renderer/src/markdown'
 
 describe('Markdown source and rendering', () => {
+  it('recognizes display equations immediately between prose lines',()=>{
+    const source='引言\n$$\nx^2+y^2\n$$\n结论\n$$z=3$$\n结尾'
+    const equations=blocks(source).filter(b=>/math|equation/i.test(b.type));expect(equations).toHaveLength(2)
+    expect(renderMarkdown(source).match(/class="katex"/g)).toHaveLength(2)
+    for(const block of equations)expect(source.slice(block.from,block.to)).toBe(block.source)
+  })
   it('locates blocks after reference definitions and resolves reference images', () => {
     const source = '[pic]: assets/a.png\n\n# Heading\n\n![alt][pic]\n'
     expect(listHeadings(source)[0]!.line).toBe(3)

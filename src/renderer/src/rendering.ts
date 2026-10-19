@@ -38,7 +38,7 @@ export function liveRendering(identifier: string) {
     const lexer = new Lexer(markdown.defaults); lexer.tokens.links = markdown.lexer(source).links
     for (const block of blocks(source)) {
       if (mode === 'read') { preview(block.from, block.to, 'read', true); continue }
-      if (block.type === 'table' || /math/i.test(block.type) || block.source.toUpperCase() === '[TOC]' || block.type === 'hr') { preview(block.from, block.to, block.type === 'multiplemath' ? 'math' : block.type, true); continue }
+      if (block.type === 'table' || /math|equation/i.test(block.type) || block.source.toUpperCase() === '[TOC]' || block.type === 'hr') { preview(block.from, block.to, /math|equation/i.test(block.type) ? 'math' : block.type, true); continue }
       if (block.type === 'code') {
         const first = state.doc.lineAt(block.from), last = state.doc.lineAt(block.to); const fenced = /^\s*(`{3,}|~{3,})/.test(first.text)
         for (let n = first.number; n <= last.number; n++) { const line = state.doc.line(n); if (fenced && (n === first.number || (n === last.number && /^\s*(`{3,}|~{3,})\s*$/.test(line.text)))) { lineStyle(line.from, 'code-fence'); hide(line.from, line.to) } else { lineStyle(line.from, 'live-code-line'); if (!fenced && /^ {4}/.test(line.text)) hide(line.from, line.from + 4) } }
@@ -47,6 +47,8 @@ export function liveRendering(identifier: string) {
       const first = state.doc.lineAt(block.from), last = state.doc.lineAt(block.to)
       for (let n = first.number; n <= last.number; n++) {
         const line = state.doc.line(n); let text = line.text, start = line.from
+        const mathStart=text.replace(/^\s*(?:>\s*)+/,'').trim()
+        if(mathStart==='$$'){let end=n+1;while(end<=last.number&&state.doc.line(end).text.replace(/^\s*(?:>\s*)+/,'').trim()!=='$$')end++;if(end<=last.number){preview(line.from,state.doc.line(end).to,'math',true);n=end;continue}}
         const heading = text.match(/^(#{1,6})\s+/)
         if (heading) { lineStyle(start, 'live-heading live-h' + heading[1]!.length); hide(start, start + heading[0].length); text = text.slice(heading[0].length); start += heading[0].length }
         const quote = text.match(/^\s*(?:>\s*)+/); if (quote) { lineStyle(line.from, 'live-quote'); hide(start, start + quote[0].length); text = text.slice(quote[0].length); start += quote[0].length }

@@ -21,6 +21,11 @@ try{
     const text=await page.locator('.cm-content').innerText();const rawMath=text.split(String.fromCharCode(10)).filter(line=>line.trim()==='$$')
     report.push({name,formulas,rawMathDelimiters:rawMath.length,codeLines:await page.locator('.live-code-line').count(),tables:await page.locator('.node-table').count(),imageCount:await page.locator('.node-image').count(),unchanged:true})
     assert.equal(rawMath.length,0,'Standalone formula delimiters must be hidden')
+    const scan=await page.evaluate(async()=>{
+      const scroller=document.querySelector('.cm-scroller');const formulas=new Set(),errors=new Set(),code=new Set(),tables=new Set(),raw=[];let max=0
+      for(let top=0;top<scroller.scrollHeight;top+=500){scroller.scrollTop=top;await new Promise(resolve=>setTimeout(resolve,35));max=Math.max(max,scroller.scrollHeight);document.querySelectorAll('.node-math,.node-inline-math').forEach(n=>formulas.add(n.dataset.from));document.querySelectorAll('.formula-error').forEach(n=>errors.add(n.closest('.preview-node')?.dataset.from));document.querySelectorAll('.live-code-line').forEach(n=>code.add(n.textContent));document.querySelectorAll('.node-table').forEach(n=>tables.add(n.dataset.from));document.querySelectorAll('.cm-line').forEach(n=>{if(n.textContent.trim()==='$$')raw.push(n.textContent)})}
+      return {formulas:formulas.size,invalidFormulas:errors.size,codeLines:code.size,tables:tables.size,rawDelimiters:raw.length,height:max}
+    });report.at(-1).fullDocument=scan;assert.equal(scan.rawDelimiters,0)
     await command('sidebar-toc');await page.locator('.cm-scroller').evaluate(e=>e.scrollTop=0);await command('theme-dark');await page.screenshot({path:'artifacts/screenshots/v2-'+name+'.png'});await command('sidebar-files')
   }
   for(const theme of ['light','dark','paper']){await command('theme-'+theme);await page.screenshot({path:'artifacts/screenshots/v2-'+theme+'.png'})}
