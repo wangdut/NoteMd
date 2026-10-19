@@ -1,12 +1,12 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { mkdtemp, readFile, readdir, rm, writeFile, mkdir } from 'node:fs/promises'
-import os from 'node:os'
 import path from 'node:path'
 import { createNote, createFolder, deleteEntry, importImages, listLibrary, moveEntry, readNote, renameEntry, reorderEntries, saveNote, helpersForTests } from '../src/main/files'
 
 const temporaryRoots: string[] = []
 async function library(): Promise<string> {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'notemd-test-'))
+  await mkdir(path.resolve('.test-data'), { recursive: true })
+  const root = await mkdtemp(path.resolve('.test-data/notemd-test-'))
   temporaryRoots.push(root)
   return root
 }

@@ -1,9 +1,12 @@
 node_modules/
+.cache/
 dist/
 release/
 vendor/
 artifacts/
 .test-data/
+test-results/
+playwright-report/
 *.log
 *.tsbuildinfo
 .env*

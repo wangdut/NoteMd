@@ -6,6 +6,17 @@ export interface NoteStamp { hash: string; exists: boolean }
 export interface LibraryEntry { name: string; path: string; kind: 'file' | 'folder'; modifiedAt: number; size?: number }
 
 const ASSET_FOLDER = /^\d{8}-\d{6}-\d{3}$/
+const MARKDOWN_EXTENSIONS = new Set(['.md', '.markdown', '.mdown'])
+const saveQueues = new Map<string, Promise<unknown>>()
+async function serialized<T>(key: string, work: () => Promise<T>): Promise<T> {
+  const previous = saveQueues.get(key) ?? Promise.resolve()
+  const next = previous.catch(() => {}).then(work)
+  saveQueues.set(key, next)
+  try { return await next } finally { if (saveQueues.get(key) === next) saveQueues.delete(key) }
+}
+function validName(name: string): boolean {
+  return !!name && !name.startsWith('.') && !/[<>:"|?*\\/\x00-\x1f]/.test(name) && !/[. ]$/.test(name) && !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(name)
+}
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg', '.avif'])
 const MIME_EXTENSION: Record<string, string> = {
   'image/png': '.png', 'image/jpeg': '.jpg', 'image/gif': '.gif', 'image/webp': '.webp',
@@ -50,6 +61,7 @@ async function resolveInside(root: string, relative: string): Promise<string> {
 async function isManagedAssetFolder(folder: string): Promise<boolean> {
   if (!ASSET_FOLDER.test(path.basename(folder))) return false
   try {
+    if ((await fs.lstat(folder)).isSymbolicLink()) return false
     const marker = JSON.parse(await fs.readFile(path.join(folder, '.notemd-assets.json'), 'utf8'))
     return marker.managedBy === 'NoteMd'
   } catch { return false }
@@ -81,7 +93,7 @@ export async function listLibrary(rootPath: string, relative = ''): Promise<Libr
       if (await isManagedAssetFolder(absolute)) continue
       const info = await fs.stat(absolute)
       entries.push({ name: entry.name, path: path.posix.join(relative.replaceAll('\\', '/'), entry.name), kind: 'folder', modifiedAt: info.mtimeMs })
-    } else if (entry.isFile() && path.extname(entry.name).toLowerCase() === '.md') {
+    } else if (entry.isFile() && MARKDOWN_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) {
       const info = await fs.stat(absolute)
       entries.push({ name: entry.name, path: path.posix.join(relative.replaceAll('\\', '/'), entry.name), kind: 'file', modifiedAt: info.mtimeMs, size: info.size })
     }
@@ -105,15 +117,18 @@ export async function readNote(rootPath: string, relative: string): Promise<{ pa
   const root = await ensureLibrary(rootPath)
   const absolute = await resolveInside(root, relative)
   const stat = await fs.lstat(absolute)
-  if (!stat.isFile() || path.extname(absolute).toLowerCase() !== '.md') throw new Error('Select a Markdown document to open.')
+  if (!stat.isFile() || !MARKDOWN_EXTENSIONS.has(path.extname(absolute).toLowerCase())) throw new Error('Select a Markdown document to open.')
   const content = await fs.readFile(absolute, 'utf8')
   return { path: path.relative(root, absolute).split(path.sep).join('/'), content, stamp: { hash: digest(content), exists: true } }
 }
 
 export async function saveNote(rootPath: string, relative: string, content: string, expected: NoteStamp): Promise<NoteStamp> {
+  return serialized(path.resolve(rootPath, relative).toLowerCase(), () => saveNoteUnqueued(rootPath, relative, content, expected))
+}
+async function saveNoteUnqueued(rootPath: string, relative: string, content: string, expected: NoteStamp): Promise<NoteStamp> {
   const root = await ensureLibrary(rootPath)
   const absolute = await resolveInside(root, relative)
-  if (path.extname(absolute).toLowerCase() !== '.md') throw new Error('Only Markdown documents can be saved here.')
+  if (!MARKDOWN_EXTENSIONS.has(path.extname(absolute).toLowerCase())) throw new Error('Only Markdown documents can be saved here.')
   let currentExists = true
   let current = ''
   try { current = await fs.readFile(absolute, 'utf8') } catch (error) {
@@ -144,7 +159,7 @@ export async function createNote(rootPath: string, folderRelative = ''): Promise
 
 export async function createFolder(rootPath: string, parentRelative: string, name: string): Promise<string> {
   const folderName = name.trim()
-  if (!folderName || folderName.startsWith('.') || /[<>:"|?*\\/\x00-\x1f]/.test(folderName) || folderName === '..') {
+  if (!validName(folderName)) {
     throw new Error('Use a folder name without path separators, hidden names, or Windows-reserved characters.')
   }
   const root = await ensureLibrary(rootPath)
@@ -190,7 +205,7 @@ export async function importImages(rootPath: string, relative: string, content: 
   if (!images.length) return { paths: [], markdown: '' }
   const root = await ensureLibrary(rootPath)
   const note = await resolveInside(root, relative)
-  if (path.extname(note).toLowerCase() !== '.md') throw new Error('Save a Markdown document before adding images.')
+  if (!MARKDOWN_EXTENSIONS.has(path.extname(note).toLowerCase())) throw new Error('Save a Markdown document before adding images.')
   for (const image of images) {
     if (!MIME_EXTENSION[image.mimeType] || image.bytes.byteLength > 25 * 1024 * 1024) throw new Error('Unsupported image format or image exceeds 25 MB.')
   }
@@ -213,7 +228,7 @@ export async function importImages(rootPath: string, relative: string, content: 
       await atomicWrite(target, Buffer.from(image.bytes), true)
       files.push(target)
       siblings.push(name)
-      links.push(`![${image.name.replace(/[\[\]\\]/g, '')}](${encodedRelativePath(path.basename(assetFolder), name)})`)
+      links.push(`![${image.name.replace(/[\[\]\\\r\n]/g, '')}](${encodedRelativePath(path.basename(assetFolder), name)})`)
     }
   } catch (error) {
     await Promise.all(files.map(file => fs.rm(file, { force: true })))
@@ -225,24 +240,102 @@ export async function importImages(rootPath: string, relative: string, content: 
 
 function imageDestinations(markdown: string): Array<{ start: number; end: number; reference: string }> {
   const output: Array<{ start: number; end: number; reference: string }> = []
-  const pattern = /!\[[^\]]*\]\(\s*(?:<([^>]+)>|([^\s)]+))[^)]*\)/g
+  const pattern = /!\[(?:\\.|[^\]\\])*\]\(\s*(?:<([^>]+)>|((?:\\.|[^()\s]|\([^()]*\))+))[^)]*\)/gd
   for (const match of markdown.matchAll(pattern)) {
     const ref = match[1] ?? match[2]
     if (!ref) continue
-    const start = match.index! + match[0].indexOf(ref)
+    const start = match.indices![1]?.[0] ?? match.indices![2]![0]
     output.push({ start, end: start + ref.length, reference: ref })
+  }
+  // Reference-style images and HTML images are portable too. Exact indices
+  // prevent an alt label containing the same path from being rewritten.
+  for (const pattern of [/^ {0,3}\[[^\]]+\]:[ \t]*(?:<([^>]+)>|([^\s]+))/gmd, /<img\b[^>]*?\bsrc\s*=\s*(?:"([^"]+)"|'([^']+)')/gdi]) {
+    for (const match of markdown.matchAll(pattern)) {
+      const ref = match[1] ?? match[2]; if (!ref) continue
+      const start = match.indices![1]?.[0] ?? match.indices![2]![0]
+      output.push({ start, end: start + ref.length, reference: ref })
+    }
   }
   return output
 }
 
+async function portableMarkdown(root: string, source: string, target: string, markdown: string): Promise<{ content: string; assetFolder: string | null }> {
+  let assetFolder: string | null = null
+  const replacements: Array<{ start: number; end: number; text: string }> = []
+  const copiedImages = new Map<string, string>()
+  try {
+    for (const image of imageDestinations(markdown)) {
+      if (/^(?:[a-z][a-z\d+.-]*:|[/]{2}|#)/i.test(image.reference)) continue
+      let decoded: string
+      try { decoded = decodeURIComponent(image.reference.split(/[?#]/, 1)[0]!) } catch { continue }
+      const original = path.resolve(path.dirname(source), decoded.replaceAll('/', path.sep))
+      if (!within(root, original) || !IMAGE_EXTENSIONS.has(path.extname(original).toLowerCase())) continue
+      await resolveInside(root, path.relative(root, original))
+      let stat
+      try { stat = await fs.lstat(original) } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue; throw error }
+      if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 25 * 1024 * 1024) continue
+      let replacement = copiedImages.get(original)
+      if (!replacement) {
+        if (!assetFolder) assetFolder = await createAssetFolder(path.dirname(target))
+        const base = path.basename(original); let copied = path.join(assetFolder, base); let n = 1
+        while (await fs.access(copied).then(() => true, () => false)) copied = path.join(assetFolder, `${path.parse(base).name}-${n++}${path.extname(base)}`)
+        await fs.copyFile(original, copied, 1)
+        replacement = encodedRelativePath(path.basename(assetFolder), path.basename(copied))
+        copiedImages.set(original, replacement)
+      }
+      replacements.push({ start: image.start, end: image.end, text: replacement })
+    }
+    let content = markdown
+    for (const item of replacements.sort((a, b) => b.start - a.start)) content = content.slice(0, item.start) + item.text + content.slice(item.end)
+    return { content, assetFolder }
+  } catch (error) {
+    if (assetFolder) await fs.rm(assetFolder, { recursive: true, force: true })
+    throw error
+  }
+}
+
+export async function copyNote(rootPath: string, relative: string, targetRoot: string, targetRelative: string, markdown: string, expected: NoteStamp): Promise<{ path: string; content: string; stamp: NoteStamp }> {
+  const root = await ensureLibrary(rootPath)
+  const source = await resolveInside(root, relative)
+  const destinationRoot = await ensureLibrary(targetRoot)
+  const target = await resolveInside(destinationRoot, targetRelative)
+  const result = path.dirname(source) === path.dirname(target) ? { content: markdown, assetFolder: null } : await portableMarkdown(root, source, target, markdown)
+  try {
+    const stamp = await saveNote(destinationRoot, targetRelative, result.content, expected)
+    return { path: targetRelative, content: result.content, stamp }
+  } catch (error) { if (result.assetFolder) await fs.rm(result.assetFolder, { recursive: true, force: true }); throw error }
+}
+
+export async function libraryItemPath(rootPath: string, relative: string): Promise<string> {
+  const root = await ensureLibrary(rootPath)
+  const target = await resolveInside(root, relative)
+  await fs.lstat(target)
+  return target
+}
+export async function managedAssetFolders(rootPath: string, relative: string): Promise<string[]> {
+  const note = await libraryItemPath(rootPath, relative)
+  const content = await fs.readFile(note, 'utf8')
+  const folders = new Set<string>()
+  for (const image of imageDestinations(content)) {
+    let decoded: string
+    try { decoded = decodeURIComponent(image.reference) } catch { continue }
+    const first = decoded.split('/')[0]!
+    if (!ASSET_FOLDER.test(first)) continue
+    const folder = path.join(path.dirname(note), first)
+    if (await isManagedAssetFolder(folder)) folders.add(folder)
+  }
+  return [...folders]
+}
+
 export async function renameEntry(rootPath: string, relative: string, newName: string): Promise<string> {
   const requested = newName.trim()
-  if (!requested || /[<>:"|?*\\/\x00-\x1f]/.test(requested) || requested === '.' || requested === '..' || requested.startsWith('.')) throw new Error('Enter a valid file or folder name.')
+  if (!validName(requested)) throw new Error('Enter a valid file or folder name.')
   const root = await ensureLibrary(rootPath)
   const source = await resolveInside(root, relative)
   const stat = await fs.lstat(source)
   if (stat.isSymbolicLink()) throw new Error('Symbolic links cannot be renamed from the library.')
-  const name = stat.isFile() && path.extname(source).toLowerCase() === '.md' && path.extname(requested) === '' ? `${requested}.md` : requested
+  const name = stat.isFile() && MARKDOWN_EXTENSIONS.has(path.extname(source).toLowerCase()) && path.extname(requested) === '' ? `${requested}${path.extname(source)}` : requested
+  if (stat.isFile() && !MARKDOWN_EXTENSIONS.has(path.extname(name).toLowerCase())) throw new Error('文档需要保留 Markdown 扩展名。')
   const target = path.join(path.dirname(source), name)
   if (source === target) return path.relative(root, target).split(path.sep).join('/')
   try { await fs.access(target); throw new Error('An item with that name already exists.') }
@@ -264,38 +357,38 @@ export async function moveEntry(rootPath: string, relative: string, destinationR
   try { await fs.access(target); throw new Error('An item with that name already exists.') }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error }
 
-  if (sourceInfo.isDirectory()) await fs.rename(source, target)
-  else if (path.extname(source).toLowerCase() === '.md') {
-    const markdown = await fs.readFile(source, 'utf8')
-    const replacements: Array<{ start: number; end: number; text: string }> = []
-    let assetFolder: string | null = null
-    try {
-      for (const image of imageDestinations(markdown)) {
-        if (/^(?:[a-z][a-z\d+.-]*:|\/\/|#)/i.test(image.reference)) continue
-        let decoded: string
-        try { decoded = decodeURIComponent(image.reference.split(/[?#]/, 1)[0]!) } catch { continue }
-        const original = path.resolve(path.dirname(source), decoded.replaceAll('/', path.sep))
-        let imageStat
-        try { imageStat = await fs.lstat(original) } catch { continue }
-        if (!imageStat.isFile() || imageStat.isSymbolicLink() || !IMAGE_EXTENSIONS.has(path.extname(original).toLowerCase())) continue
-        if (!assetFolder) assetFolder = await createAssetFolder(path.dirname(target))
-        const base = path.basename(original)
-        let copied = path.join(assetFolder, base)
-        let n = 1
-        while (await fs.access(copied).then(() => true, () => false)) copied = path.join(assetFolder, `${path.parse(base).name}-${n++}${path.extname(base)}`)
-        await fs.copyFile(original, copied, 1)
-        replacements.push({ start: image.start, end: image.end, text: encodedRelativePath(path.basename(assetFolder), path.basename(copied)) })
+  if (sourceInfo.isDirectory()) {
+    // Relative assets inside the directory retain their location when moved.
+    // Reject external relative assets until they can be migrated transactionally.
+    async function inspect(folder: string): Promise<void> {
+      for (const entry of await fs.readdir(folder, { withFileTypes: true })) {
+        const absolute = path.join(folder, entry.name)
+        if (entry.isSymbolicLink()) throw new Error('目录含符号链接，不能直接移动。')
+        if (entry.isDirectory()) await inspect(absolute)
+        else if (MARKDOWN_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) {
+          for (const image of imageDestinations(await fs.readFile(absolute, 'utf8'))) {
+            if (/^(?:[a-z][a-z\d+.-]*:|\/\/|#)/i.test(image.reference)) continue
+            let decoded: string
+            try { decoded = decodeURIComponent(image.reference) } catch { continue }
+            if (!within(source, path.resolve(folder, decoded))) throw new Error('目录内文档引用了目录外图片，请先单独移动该文档以携带图片。')
+          }
+        }
       }
-      let updated = markdown
-      for (const item of replacements.sort((a, b) => b.start - a.start)) updated = `${updated.slice(0, item.start)}${item.text}${updated.slice(item.end)}`
-      await atomicWrite(target, updated, true)
-      await fs.rm(source)
+    }
+    await inspect(source)
+    await fs.rename(source, target)
+  } else if (MARKDOWN_EXTENSIONS.has(path.extname(source).toLowerCase())) {
+    const result = await portableMarkdown(root, source, target, await fs.readFile(source, 'utf8'))
+    let created = false
+    try {
+      await atomicWrite(target, result.content, true); created = true
+      await fs.unlink(source)
     } catch (error) {
-      await fs.rm(target, { force: true })
-      if (assetFolder) await fs.rm(assetFolder, { recursive: true, force: true })
+      if (created) await fs.rm(target, { force: true })
+      if (result.assetFolder) await fs.rm(result.assetFolder, { recursive: true, force: true })
       throw error
     }
-  } else await fs.rename(source, target)
+  } else throw new Error('Only Markdown documents can be moved here.')
   return path.relative(root, target).split(path.sep).join('/')
 }
 

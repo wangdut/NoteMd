@@ -2,13 +2,15 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from 'electron'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { createNote, createFolder, importImages, listLibrary, moveEntry, readNote, renameEntry, reorderEntries, resolveImageDataUrl, saveNote } from './files.js'
+import { copyNote, libraryItemPath, managedAssetFolders, createNote, createFolder, importImages, listLibrary, moveEntry, readNote, renameEntry, reorderEntries, resolveImageDataUrl, saveNote } from './files.js'
 
+if (process.env.NOTEMD_USER_DATA) app.setPath('userData', path.resolve(process.env.NOTEMD_USER_DATA))
 const here = path.dirname(fileURLToPath(import.meta.url))
 const windows = new Set<BrowserWindow>()
 const approvedExternal = new Set<string>()
+const approvedSaveStamps = new Map<string, { hash: string; exists: boolean }>()
 interface Preferences { libraryPath: string; theme: 'light' | 'dark' | 'paper'; editorZoom: number; tocZoom: number; sidebar: 'toc' | 'files' }
-const defaults = (): Preferences => ({ libraryPath: path.join(app.getPath('documents'), 'NoteMd'), theme: 'light', editorZoom: 100, tocZoom: 100, sidebar: 'toc' })
+const defaults = (): Preferences => ({ libraryPath: process.env.NOTEMD_LIBRARY_PATH || path.join(app.getPath('documents'), 'NoteMd'), theme: 'light', editorZoom: 100, tocZoom: 100, sidebar: 'toc' })
 
 async function preferences(): Promise<Preferences> {
   try {
@@ -39,7 +41,7 @@ function installMenu(): void {
       { label: '退出 NoteMd', role: 'quit' },
     ] },
     { label: '编辑(&E)', submenu: [
-      { role: 'undo', label: '撤销' }, { role: 'redo', label: '重做' }, { type: 'separator' },
+      { label: '撤销', accelerator: 'Ctrl+Z', click: () => sendCommand('undo') }, { label: '重做', accelerator: 'Ctrl+Y', click: () => sendCommand('redo') }, { type: 'separator' },
       { role: 'cut', label: '剪切' }, { role: 'copy', label: '复制' }, { role: 'paste', label: '粘贴' },
       { role: 'selectAll', label: '全选' }, { type: 'separator' }, { label: '查找与替换', accelerator: 'Ctrl+H', click: () => sendCommand('replace') },
     ] },
@@ -47,6 +49,7 @@ function installMenu(): void {
       { label: '标题 1', accelerator: 'Ctrl+1', click: () => sendCommand('heading-1') },
       { label: '标题 2', accelerator: 'Ctrl+2', click: () => sendCommand('heading-2') },
       { label: '标题 3', accelerator: 'Ctrl+3', click: () => sendCommand('heading-3') },
+      ...[4, 5, 6].map(n => ({ label: '标题 ' + n, click: () => sendCommand('heading-' + n) })),
       { label: '正文', accelerator: 'Ctrl+0', click: () => sendCommand('paragraph') },
       { label: '引用', accelerator: 'Ctrl+Shift+Q', click: () => sendCommand('blockquote') },
       { label: '代码块', accelerator: 'Ctrl+Shift+C', click: () => sendCommand('codeblock') },
@@ -58,6 +61,7 @@ function installMenu(): void {
     { label: '格式(&O)', submenu: [
       { label: '加粗', accelerator: 'Ctrl+B', click: () => sendCommand('bold') }, { label: '斜体', accelerator: 'Ctrl+I', click: () => sendCommand('italic') },
       { label: '行内代码', accelerator: 'Ctrl+Shift+M', click: () => sendCommand('inline-code') }, { label: '超链接', accelerator: 'Ctrl+K', click: () => sendCommand('link') },
+      ...Object.entries({ underline: '下划线', strike: '删除线', highlight: '高亮', color: '字体颜色', superscript: '上标', subscript: '下标' }).map(([key, label]) => ({ label, click: () => sendCommand(key) })),
       { label: '公式块', click: () => sendCommand('math-block') }, { label: '行内公式', click: () => sendCommand('math-inline') },
     ] },
     { label: '视图(&V)', submenu: [
@@ -89,6 +93,7 @@ async function approvedNote(identifier: string): Promise<{ root: string; relativ
 }
 
 function setupIpc(): void {
+  ipcMain.handle('notemd:open-link', async (_event, url: string) => { if (!/^(https?:|mailto:)/i.test(url)) throw new Error('不支持的链接'); await shell.openExternal(url) })
   ipcMain.handle('notemd:state', async () => {
     const state = await preferences()
     await fs.mkdir(state.libraryPath, { recursive: true })
@@ -121,7 +126,18 @@ function setupIpc(): void {
     if (result.canceled || !result.filePath) return null
     const absolute = path.resolve(result.filePath)
     approvedExternal.add(absolute)
+    const stamp = await readNote(path.dirname(absolute), path.basename(absolute)).then(note => note.stamp, error => { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; return { hash: '', exists: false } })
+    approvedSaveStamps.set(absolute, stamp)
     return absolute
+  })
+  ipcMain.handle('notemd:save-as', async (_event, source: string, destination: string, content: string) => {
+    const from = await approvedNote(source)
+    const to = await approvedNote(destination)
+    const expected = approvedSaveStamps.get(path.resolve(destination))
+    if (!expected) throw new Error('请通过另存为对话框选择目标。')
+    const result = await copyNote(from.root, from.relative, to.root, to.relative, content, expected)
+    approvedSaveStamps.delete(path.resolve(destination))
+    return result
   })
   ipcMain.handle('notemd:list', async (_event, folder: string) => listLibrary((await preferences()).libraryPath, folder))
   ipcMain.handle('notemd:create-note', async (_event, folder: string) => createNote((await preferences()).libraryPath, folder))
@@ -143,37 +159,18 @@ function setupIpc(): void {
   ipcMain.handle('notemd:move', async (_event, relative: string, destination: string) => moveEntry((await preferences()).libraryPath, relative, destination))
   ipcMain.handle('notemd:reorder', async (_event, folder: string, names: string[]) => reorderEntries((await preferences()).libraryPath, folder, names))
   ipcMain.handle('notemd:trash', async (_event, relative: string) => {
-    const root = await fs.realpath((await preferences()).libraryPath)
-    const absolute = path.resolve(root, relative.replaceAll('/', path.sep))
-    const relation = path.relative(root, absolute)
-    if (!relation || relation === '..' || relation.startsWith(`..${path.sep}`) || path.isAbsolute(relation)) throw new Error('The requested item is outside the document library.')
-    const stat = await fs.lstat(absolute)
-    if (stat.isSymbolicLink()) throw new Error('Symbolic links cannot be deleted from the library.')
-    await shell.trashItem(absolute)
+    const target = await libraryItemPath((await preferences()).libraryPath, relative)
+    await shell.trashItem(target)
   })
-  ipcMain.handle('notemd:reveal', async (_event, relative: string) => {
-    const root = await fs.realpath((await preferences()).libraryPath)
-    const absolute = path.resolve(root, relative.replaceAll('/', path.sep))
-    const relation = path.relative(root, absolute)
-    if (!relation || relation === '..' || relation.startsWith(`..${path.sep}`) || path.isAbsolute(relation)) throw new Error('The requested item is outside the document library.')
-    await fs.lstat(absolute)
-    shell.showItemInFolder(absolute)
+  ipcMain.handle('notemd:reveal', async (_event, identifier: string) => {
+    const doc = await approvedNote(identifier)
+    shell.showItemInFolder(await libraryItemPath(doc.root, doc.relative))
   })
-  ipcMain.handle('notemd:show-assets', async (_event, relative: string) => {
-    const root = await fs.realpath((await preferences()).libraryPath)
-    const notePath = path.resolve(root, relative.replaceAll('/', path.sep))
-    const markdown = await fs.readFile(notePath, 'utf8')
-    for (const match of markdown.matchAll(/!?\[[^\]]*\]\(\s*<?([^\s)>]+)>?/g)) {
-      const ref = match[1]
-      if (!ref || /^[a-z][a-z\d+.-]*:/i.test(ref)) continue
-      let folder: string
-      try { folder = decodeURIComponent(ref.split('/')[0]!) } catch { continue }
-      if (!/^\d{8}-\d{6}-\d{3}$/.test(folder)) continue
-      const target = path.resolve(path.dirname(notePath), folder)
-      const marker = JSON.parse(await fs.readFile(path.join(target, '.notemd-assets.json'), 'utf8').catch(() => 'null'))
-      if (marker?.managedBy === 'NoteMd') { await shell.openPath(target); return true }
-    }
-    return false
+  ipcMain.handle('notemd:show-assets', async (_event, identifier: string) => {
+    const doc = await approvedNote(identifier)
+    const folders = await managedAssetFolders(doc.root, doc.relative)
+    for (const folder of folders) await shell.openPath(folder)
+    return folders.length > 0
   })
   ipcMain.handle('notemd:resolve-image', async (_event, identifier: string, reference: string) => {
     const doc = await approvedNote(identifier)
@@ -192,10 +189,14 @@ function setupIpc(): void {
 async function createWindow(): Promise<void> {
   const window = new BrowserWindow({
     width: 1440, height: 920, minWidth: 920, minHeight: 600, show: false, title: 'NoteMd', backgroundColor: '#f5f7f8',
-    ...(process.platform === 'win32' ? { titleBarOverlay: { color: '#ffffff', symbolColor: '#344251', height: 44 }, titleBarStyle: 'hidden' as const } : {}),
     webPreferences: { preload: path.join(here, 'preload.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false },
   })
   windows.add(window)
+  let readyToClose = false
+  window.on('close', event => { if (!readyToClose) { event.preventDefault(); window.webContents.send('notemd:command', 'close') } })
+  const closeReady = (event: Electron.IpcMainEvent) => { if (event.sender === window.webContents) { readyToClose = true; window.close() } }
+  ipcMain.on('notemd:close-ready', closeReady)
+  window.on('closed', () => ipcMain.removeListener('notemd:close-ready', closeReady))
   window.once('ready-to-show', () => window.show())
   window.on('closed', () => windows.delete(window))
   window.webContents.setWindowOpenHandler(({ url }) => {

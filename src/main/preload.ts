@@ -1,6 +1,9 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
 contextBridge.exposeInMainWorld('noteMd', {
+  openLink: (url: string) => ipcRenderer.invoke('notemd:open-link', url),
+  saveAs: (source: string, destination: string, content: string) => ipcRenderer.invoke('notemd:save-as', source, destination, content),
+  closeReady: () => ipcRenderer.send('notemd:close-ready'),
   getState: () => ipcRenderer.invoke('notemd:state'),
   setPreference: (key: string, value: unknown) => ipcRenderer.invoke('notemd:preference', key, value),
   chooseLibrary: () => ipcRenderer.invoke('notemd:choose-library'),
