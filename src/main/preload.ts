@@ -1,6 +1,9 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
 contextBridge.exposeInMainWorld('noteMd', {
+  clipboard: (action: string, text?: string) => ipcRenderer.invoke('notemd:clipboard',action,text),
+  copyImage: (identifier: string, reference: string) => ipcRenderer.invoke('notemd:copy-image',identifier,reference),
+  renameCurrent: (identifier: string, name: string) => ipcRenderer.invoke('notemd:rename-current',identifier,name),
   pickImages: () => ipcRenderer.invoke('notemd:pick-images'),
   duplicate: (relative: string) => ipcRenderer.invoke('notemd:duplicate', relative),
   copyPath: (relative: string) => ipcRenderer.invoke('notemd:copy-path', relative),

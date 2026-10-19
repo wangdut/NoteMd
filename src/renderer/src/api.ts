@@ -5,6 +5,7 @@ export interface AppState {
   theme: 'light' | 'dark' | 'paper'
   editorZoom: number
   tocZoom: number
+  sidebarWidth: number
   sidebar: 'toc' | 'files'
 }
 
@@ -24,6 +25,9 @@ declare global {
   interface Window {
     activeNotePath?: string
     noteMd: {
+      clipboard(action: 'write'|'read'|'copy'|'cut'|'paste'|'select-all', text?:string): Promise<string | void>
+      copyImage(identifier:string, reference:string): Promise<void>
+      renameCurrent(identifier:string, name:string): Promise<string>
       pickImages(): Promise<PasteImage[]>
       duplicate(relative: string): Promise<string>
       copyPath(relative: string): Promise<void>

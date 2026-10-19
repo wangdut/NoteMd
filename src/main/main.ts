@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, shell } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, shell, nativeTheme, nativeImage } from 'electron'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -12,8 +12,14 @@ const approvedExternal = new Set<string>()
 const approvedSaveStamps = new Map<string, { hash: string; exists: boolean }>()
 let recovery: RecoveryStore
 let preferenceQueue: Promise<unknown> = Promise.resolve()
-interface Preferences { libraryPath: string; theme: 'light' | 'dark' | 'paper'; editorZoom: number; tocZoom: number; sidebar: 'toc' | 'files' }
-const defaults = (): Preferences => ({ libraryPath: process.env.NOTEMD_LIBRARY_PATH || path.join(app.getPath('documents'), 'NoteMd'), theme: 'light', editorZoom: 100, tocZoom: 100, sidebar: 'toc' })
+interface Preferences { libraryPath: string; theme: 'light' | 'dark' | 'paper'; editorZoom: number; tocZoom: number; sidebarWidth: number; sidebar: 'toc' | 'files' }
+const defaults = (): Preferences => ({ libraryPath: process.env.NOTEMD_LIBRARY_PATH || path.join(app.getPath('documents'), 'NoteMd'), theme: 'light', editorZoom: 100, tocZoom: 100, sidebarWidth:258, sidebar: 'toc' })
+function applyWindowTheme(theme: Preferences['theme']) {
+  nativeTheme.themeSource = theme === 'dark' ? 'dark' : 'light'
+  const color = theme === 'dark' ? '#17242e' : theme === 'paper' ? '#faf5e9' : '#ffffff'
+  const symbolColor = theme === 'dark' ? '#d9e6e9' : theme === 'paper' ? '#443e30' : '#25383c'
+  for (const window of windows) { window.setBackgroundColor(color); if(process.platform==='win32')window.setTitleBarOverlay({color,symbolColor,height:34}) }
+}
 const singleInstance = app.requestSingleInstanceLock()
 if (!singleInstance) app.quit()
 app.on('second-instance', () => { const window = activeWindow(); if (window?.isMinimized()) window.restore(); window?.focus() })
@@ -37,67 +43,7 @@ async function updatePreferences(patch: Partial<Preferences>): Promise<Preferenc
   return work
 }
 const activeWindow = (): BrowserWindow | undefined => BrowserWindow.getFocusedWindow() ?? [...windows].at(-1)
-const sendCommand = (command: string): void => activeWindow()?.webContents.send('notemd:command', command)
 
-function installMenu(): void {
-  const template: Electron.MenuItemConstructorOptions[] = [
-    { label: '文件(&F)', submenu: [
-      { label: '新建文档', accelerator: 'Ctrl+N', click: () => sendCommand('new') },
-      { label: '新建文件夹', click: () => sendCommand('new-folder') }, { type: 'separator' },
-      { label: '打开文档…', accelerator: 'Ctrl+O', click: () => sendCommand('open') },
-      { label: '保存', accelerator: 'Ctrl+S', click: () => sendCommand('save') },
-      { label: '另存为…', accelerator: 'Ctrl+Shift+S', click: () => sendCommand('save-as') },
-      { label: '选择文档库位置…', click: () => sendCommand('choose-library') },
-      { label: '恢复未保存草稿', click: () => sendCommand('recovery') },
-      { type: 'separator' }, { label: '导出为 HTML…', click: () => sendCommand('export-html') },
-      { label: '导出为 PDF…', click: () => sendCommand('export-pdf') },
-      { label: '打印…', accelerator: 'Ctrl+P', click: () => sendCommand('print') },
-      { label: '在资源管理器中显示', click: () => sendCommand('reveal') }, { type: 'separator' },
-      { label: '退出 NoteMd', role: 'quit' },
-    ] },
-    { label: '编辑(&E)', submenu: [
-      { label: '撤销', accelerator: 'Ctrl+Z', click: () => sendCommand('undo') }, { label: '重做', accelerator: 'Ctrl+Y', click: () => sendCommand('redo') }, { type: 'separator' },
-      { role: 'cut', label: '剪切' }, { role: 'copy', label: '复制' }, { role: 'paste', label: '粘贴' },
-      { role: 'selectAll', label: '全选' }, { type: 'separator' }, { label: '查找与替换', accelerator: 'Ctrl+H', click: () => sendCommand('replace') },
-    ] },
-    { label: '段落(&P)', submenu: [
-      { label: '标题 1', accelerator: 'Ctrl+1', click: () => sendCommand('heading-1') },
-      { label: '标题 2', accelerator: 'Ctrl+2', click: () => sendCommand('heading-2') },
-      { label: '标题 3', accelerator: 'Ctrl+3', click: () => sendCommand('heading-3') },
-      ...[4, 5, 6].map(n => ({ label: '标题 ' + n, click: () => sendCommand('heading-' + n) })),
-      { label: '正文', accelerator: 'Ctrl+0', click: () => sendCommand('paragraph') },
-      { label: '引用', accelerator: 'Ctrl+Shift+Q', click: () => sendCommand('blockquote') },
-      { label: '代码块', accelerator: 'Ctrl+Shift+C', click: () => sendCommand('codeblock') },
-      { label: '无序列表', accelerator: 'Ctrl+Shift+8', click: () => sendCommand('bullet-list') },
-      { label: '有序列表', accelerator: 'Ctrl+Shift+7', click: () => sendCommand('ordered-list') },
-      { label: '任务列表', click: () => sendCommand('task-list') }, { label: '插入表格', click: () => sendCommand('table') },
-      { label: '插入内容目录', click: () => sendCommand('toc') },
-    ] },
-    { label: '格式(&O)', submenu: [
-      { label: '加粗', accelerator: 'Ctrl+B', click: () => sendCommand('bold') }, { label: '斜体', accelerator: 'Ctrl+I', click: () => sendCommand('italic') },
-      { label: '行内代码', accelerator: 'Ctrl+Shift+M', click: () => sendCommand('inline-code') }, { label: '超链接', accelerator: 'Ctrl+K', click: () => sendCommand('link') },
-      { label: '插入图片…', click: () => sendCommand('image') },
-      ...Object.entries({ underline: '下划线', strike: '删除线', highlight: '高亮', color: '字体颜色', superscript: '上标', subscript: '下标' }).map(([key, label]) => ({ label, click: () => sendCommand(key) })),
-      { label: '公式块', click: () => sendCommand('math-block') }, { label: '行内公式', click: () => sendCommand('math-inline') },
-    ] },
-    { label: '视图(&V)', submenu: [
-      { label: '目录侧栏', click: () => sendCommand('sidebar-toc') }, { label: '文件库侧栏', click: () => sendCommand('sidebar-files') },
-      { label: '专注模式', click: () => sendCommand('focus') }, { type: 'separator' },
-      { label: '实时渲染', click: () => sendCommand('mode-live') }, { label: '源代码', click: () => sendCommand('mode-source') },
-      { label: '阅读模式', click: () => sendCommand('mode-read') }, { type: 'separator' },
-      { label: '放大正文', accelerator: 'Ctrl+=', click: () => sendCommand('zoom-in') },
-      { label: '缩小正文', accelerator: 'Ctrl+-', click: () => sendCommand('zoom-out') }, { label: '重置正文缩放', click: () => sendCommand('zoom-reset') },
-    ] },
-    { label: '主题(&T)', submenu: [
-      { label: '浅色', click: () => sendCommand('theme-light') }, { label: '深色', click: () => sendCommand('theme-dark') }, { label: '暖纸', click: () => sendCommand('theme-paper') },
-    ] },
-    { label: '帮助(&H)', submenu: [
-      { label: '选择文档库位置…', click: () => sendCommand('choose-library') }, { label: '快捷键速览', click: () => sendCommand('shortcuts') },
-      { label: '关于 NoteMd', click: () => sendCommand('about') },
-    ] },
-  ]
-  Menu.setApplicationMenu(Menu.buildFromTemplate(template))
-}
 
 async function approvedNote(identifier: string): Promise<{ root: string; relative: string }> {
   if (path.isAbsolute(identifier)) {
@@ -110,6 +56,23 @@ async function approvedNote(identifier: string): Promise<{ root: string; relativ
 
 function setupIpc(): void {
   recovery = new RecoveryStore(path.join(app.getPath('userData'), 'recovery'))
+  ipcMain.handle('notemd:clipboard', (event, action: string, text?: string) => {
+    if (action === 'write') { clipboard.writeText(String(text ?? '')); return }
+    if (action === 'read') return clipboard.readText()
+    const target = event.sender
+    if (action === 'copy') target.copy(); else if (action === 'cut') target.cut(); else if (action === 'paste') target.paste(); else if (action === 'select-all') target.selectAll(); else throw new Error('Unsupported clipboard action')
+  })
+  ipcMain.handle('notemd:copy-image', async (_event, identifier: string, reference: string) => {
+    const doc = await approvedNote(identifier); const target = await libraryItemPath(doc.root, doc.relative)
+    if (/^https?:/i.test(reference)) throw new Error('远程图片请先保存到本地，或使用复制 Markdown。')
+    const data = await resolveImageDataUrl(target, reference); const image = nativeImage.createFromDataURL(data)
+    if(image.isEmpty())throw new Error('该图片格式无法复制到系统剪贴板。'); clipboard.writeImage(image)
+  })
+  ipcMain.handle('notemd:rename-current', async (_event, identifier: string, name: string) => {
+    const doc = await approvedNote(identifier); const relative = await renameEntry(doc.root,doc.relative,name)
+    if(path.isAbsolute(identifier)){const next=path.resolve(doc.root,relative);approvedExternal.delete(path.resolve(identifier));approvedExternal.add(next);return next}
+    return relative
+  })
   ipcMain.handle('notemd:draft', async (_event, identifier: string, content: string, stamp: { hash: string; exists: boolean }) => {
     const doc = await approvedNote(identifier)
     const target = path.resolve(doc.root, doc.relative)
@@ -140,8 +103,9 @@ function setupIpc(): void {
     if (key === 'theme' && !['light', 'dark', 'paper'].includes(String(value))) throw new Error('Unknown theme.')
     if ((key === 'editorZoom' || key === 'tocZoom') && (typeof value !== 'number' || !Number.isFinite(value) || value < 70 || value > 200)) throw new Error('Zoom must be between 70% and 200%.')
     if (key === 'sidebar' && !['toc', 'files'].includes(String(value))) throw new Error('Unknown sidebar.')
-    if (!['theme', 'editorZoom', 'tocZoom', 'sidebar'].includes(key)) throw new Error('Unsupported preference.')
-    return updatePreferences({ [key]: value })
+    if (key === 'sidebarWidth' && (typeof value !== 'number' || !Number.isFinite(value) || value < 180 || value > 520)) throw new Error('侧栏宽度必须为 180–520。')
+    if (!['theme', 'editorZoom', 'tocZoom', 'sidebar', 'sidebarWidth'].includes(key)) throw new Error('Unsupported preference.')
+    const next = await updatePreferences({ [key]: value }); if(key==='theme')applyWindowTheme(next.theme); return next
   })
   ipcMain.handle('notemd:choose-library', async () => {
     const current = await preferences()
@@ -273,9 +237,11 @@ async function createWindow(): Promise<void> {
   const window = new BrowserWindow({
     width: 1440, height: 920, minWidth: 920, minHeight: 600, show: false, title: 'NoteMd', backgroundColor: '#f5f7f8',
     icon: path.resolve(here, '../../resources/icon.ico'),
+    titleBarStyle: 'hidden', titleBarOverlay: { color:'#ffffff',symbolColor:'#25383c',height:34 },
     webPreferences: { preload: path.join(here, 'preload.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false },
   })
   windows.add(window)
+  applyWindowTheme((await preferences()).theme)
   let readyToClose = false
   window.on('close', event => { if (!readyToClose) { event.preventDefault(); window.webContents.send('notemd:command', 'close') } })
   const closeReady = (event: Electron.IpcMainEvent) => { if (event.sender === window.webContents) { readyToClose = true; window.close() } }
@@ -301,7 +267,7 @@ async function createWindow(): Promise<void> {
 
 if (singleInstance) app.whenReady().then(() => {
   setupIpc()
-  installMenu()
+  Menu.setApplicationMenu(null)
   void createWindow()
   app.on('activate', () => { if (!BrowserWindow.getAllWindows().length) void createWindow() })
 })

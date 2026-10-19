@@ -9,6 +9,7 @@ async function command(name: string) { await app.evaluate(({ BrowserWindow }, va
 test.beforeEach(async () => {
   await fs.mkdir('test-results/runtime', { recursive: true })
   root = await fs.mkdtemp(path.resolve('test-results/runtime/app-'))
+  await fs.mkdir(path.join(root,'library'))
   const env: Record<string, string> = { ...Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)), NOTEMD_USER_DATA: path.join(root, 'profile'), NOTEMD_LIBRARY_PATH: path.join(root, 'library') }
   delete env.ELECTRON_RUN_AS_NODE
   app = await electron.launch({ executablePath: process.env.NOTEMD_TEST_EXECUTABLE, args: process.env.NOTEMD_TEST_EXECUTABLE ? [] : ['.'], env })
@@ -29,7 +30,7 @@ test('blank lines, autosave, undo, modes, outline and independent zoom', async (
   await command('save')
   const files = await fs.readdir(path.join(root, 'library')); const file = files.find(name => name.endsWith('.md'))!
   await expect.poll(() => fs.readFile(path.join(root, 'library', file), 'utf8')).toBe('# 第一章\n\n\n正文 **加粗**')
-  await expect(page.locator('.live-block h1')).toHaveText('第一章')
+  await expect(page.locator('.live-h1')).toHaveText('第一章')
   await page.waitForTimeout(600) // Start a distinct undo group after the save. 
   await page.keyboard.insertText('后加'); await command('save'); await expect(page.locator('.document-title')).not.toContainText('未保存')
   await command('undo'); await expect(editor).not.toContainText('后加')
@@ -38,7 +39,7 @@ test('blank lines, autosave, undo, modes, outline and independent zoom', async (
   await expect(editor).toHaveAttribute('contenteditable', 'false')
   await page.getByRole('button', { name: '源码', exact: true }).click(); await expect(page.locator('.live-block')).toHaveCount(0)
   await page.getByRole('button', { name: '实时', exact: true }).click()
-  await page.locator('.toc-panel button').click(); await expect(editor).toContainText('# 第一章')
+  await page.locator('.toc-panel button').click(); await expect(page.locator('.live-h1')).toHaveText('第一章'); await expect(editor).not.toContainText('# 第一章')
   await page.locator('.editor-host').dispatchEvent('wheel', { ctrlKey: true, deltaY: -100 }); await expect(page.locator('.status-bar')).toContainText('110%')
   await page.locator('.sidebar').dispatchEvent('wheel', { ctrlKey: true, deltaY: -100 }); await expect.poll(() => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--toc-zoom'))).toBe('1.1')
   await command('theme-dark'); await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
@@ -110,7 +111,7 @@ test('folder and document sorting, copy, task toggle, CRLF roundtrip and read-on
   const a=page.locator('.file-row').filter({hasText:'A.md'}),b=page.locator('.file-row').filter({hasText:'B.md'})
   await b.dragTo(a,{targetPosition:{x:80,y:2}})
   await expect(page.locator('.file-row').first()).toContainText('B.md')
-  await a.click(); await expect(page.locator('.live-block input')).toBeVisible();await page.locator('.live-block input').click()
+  await a.click(); await expect(page.locator('.list-marker input')).toBeVisible();await page.locator('.list-marker input').click()
   await command('save');await expect.poll(()=>fs.readFile(path.join(root,'library','A.md'),'utf8')).toContain('- [x]')
   const saved=await fs.readFile(path.join(root,'library','A.md'),'utf8');expect(saved.replaceAll('\r\n','')).not.toContain('\n')
   await command('mode-read');await page.locator('.cm-content').click();await page.keyboard.press('Enter');await page.keyboard.insertText('SHOULD NOT INSERT');await command('save')
