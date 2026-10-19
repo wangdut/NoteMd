@@ -20,3 +20,5 @@ NoteMd 自有代码采用 MIT。第三方代码遵循其原许可。
 | `third-party/marktext/packages/muya/src/utils/marked/extensions/footnote.ts` | `packages/muya/src/utils/marked/extensions/footnote.ts` | 脚注语法 |
 
 MarkText 的 Muya 编辑器整体采用块树序列化；NoteMd 不复用此编辑状态转换流程，避免它规范化源文档的空白段落。NoteMd 自身依赖和资产采用各自许可。
+
+0.2 交互改版参考完整本地 MarkText 仓库 commit `4df6a05a978d09aee450c77ee8cbc0c07510aaf5` 的图片工具、公式预览与表格行为。本轮未复制完整 Muya 内核；以上已有复用文件仍保留原来源记录。
