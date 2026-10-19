@@ -1,5 +1,27 @@
 export type Alignment = 'left' | 'center' | 'right'
 export interface TableData { rows: string[][]; align: Alignment[] }
+export function serializeCell(cell:HTMLElement):string{
+  function inline(node:Node):string{
+    if(node.nodeType===3)return (node.textContent??'').replace(/[\r\n]+/g,' ').replace(/(?<!\\)\|/g,'\\|')
+    if(!(node instanceof HTMLElement))return ''
+    if(node.dataset.markdown)return node.dataset.markdown
+    const text=[...node.childNodes].map(inline).join('')
+    if(node.tagName==='BR')return '<br>'
+    if(node.tagName==='STRONG'||node.tagName==='B')return '**'+text+'**'
+    if(node.tagName==='EM'||node.tagName==='I')return '*'+text+'*'
+    if(node.tagName==='S'||node.tagName==='DEL')return '~~'+text+'~~'
+    if(node.tagName==='U')return '<u>'+text+'</u>'
+    if(node.tagName==='MARK')return '=='+text+'=='
+    if(node.tagName==='SUP')return '^'+text+'^'
+    if(node.tagName==='SUB')return '~'+text+'~'
+    if(node.tagName==='CODE')return '`'+text+'`'
+    if(node.tagName==='A')return '['+text+'](<'+(node.getAttribute('href')??'').replace(/[<>]/g,'')+'>)'
+    if(node.tagName==='IMG')return '!['+(node.getAttribute('alt')??'').replace(/[\[\]]/g,'')+'](<'+(node.dataset.localSrc??node.getAttribute('src')??'')+'>)'
+    if(node.style.color)return '<span style="color:'+node.style.color+'">'+text+'</span>'
+    return (node.tagName==='DIV'&&node.previousSibling?'<br>':'')+text
+  }
+  return [...cell.childNodes].map(inline).join('')
+}
 export function splitRow(line: string): string[] {
   const text = line.trim().replace(/^\|/, '').replace(/(?<!\\)\|$/, '')
   const cells: string[] = []; let cell = ''; let escaped = false

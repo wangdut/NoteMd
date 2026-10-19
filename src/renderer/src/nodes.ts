@@ -1,6 +1,6 @@
 import { EditorView, WidgetType } from '@codemirror/view'
 import { renderMarkdown, resolveImages } from './markdown'
-import { changeTable, parseTable, serializeTable } from './tables'
+import { changeTable, parseTable, serializeTable, serializeCell } from './tables'
 export interface NodeSelection { kind: string; from: number; to: number; source: string; row?: number; column?: number }
 const selectedNodes = new WeakMap<EditorView, NodeSelection>()
 const cellRanges = new WeakMap<EditorView, { cell:HTMLTableCellElement; range:Range }>()
@@ -23,7 +23,7 @@ export function formatCell(view:EditorView,before:string,after=before):boolean{
 }
 export function selectedNode(view: EditorView): NodeSelection | undefined {
   const node = selectedNodes.get(view)
-  return node && view.state.sliceDoc(node.from, node.to).replaceAll('\r\n', '\n') === node.source ? node : undefined
+  return node && node.from>=0 && node.to<=view.state.doc.length && view.state.sliceDoc(node.from, node.to).replaceAll('\r\n', '\n') === node.source ? node : undefined
 }
 export function clearNode(view: EditorView) { selectedNodes.delete(view); view.dom.querySelectorAll('.node-selected').forEach(n => n.classList.remove('node-selected')) }
 export function nodeCommand(view: EditorView, command: string): boolean {
@@ -79,12 +79,13 @@ export class PreviewWidget extends WidgetType {
   }
   private attachCells(view: EditorView, node: HTMLElement) {
     node.querySelectorAll<HTMLTableCellElement>('td,th').forEach(cell => {
+      cell.querySelectorAll<HTMLElement>('.katex').forEach(math=>{const tex=math.querySelector('annotation')?.textContent;if(tex){math.dataset.markdown='$'+tex+'$';math.contentEditable='false'}})
       cell.contentEditable = 'true'; cell.tabIndex = 0; cell.setAttribute('role', 'textbox'); cell.setAttribute('aria-label', '表格 第' + ((cell.parentElement as HTMLTableRowElement).rowIndex + 1) + '行 第' + (cell.cellIndex + 1) + '列')
       cell.addEventListener('focus', () => { const source = node.dataset.source!; const from = Number(node.dataset.from); select(view, node, { kind: 'table', source, from, to: from + source.length, row: (cell.parentElement as HTMLTableRowElement).rowIndex, column: cell.cellIndex }, false) })
       cell.addEventListener('input', () => {
         if (view.state.readOnly) return
         const source = node.dataset.source!; const from = Number(node.dataset.from); const data = parseTable(source); const row = (cell.parentElement as HTMLTableRowElement).rowIndex
-        data.rows[row]![cell.cellIndex] = cell.innerText.replace(/\r?\n/g, '<br>').replace(/(?<!\\)\|/g, '\\|')
+        data.rows[row]![cell.cellIndex] = serializeCell(cell)
         const next = serializeTable(data); node.dataset.source = next
         view.dispatch({ changes: { from, to: from + source.length, insert: next }, userEvent: 'input' })
         selectedNodes.set(view, { kind: 'table', from, to: from + next.length, source: next, row, column: cell.cellIndex })
