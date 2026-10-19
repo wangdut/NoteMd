@@ -3,6 +3,12 @@ import { describe, expect, it } from 'vitest'
 import { blocks, listHeadings, renderMarkdown, words } from '../src/renderer/src/markdown'
 
 describe('Markdown source and rendering', () => {
+  it('locates blocks after reference definitions and resolves reference images', () => {
+    const source = '[pic]: assets/a.png\n\n# Heading\n\n![alt][pic]\n'
+    expect(listHeadings(source)[0]!.line).toBe(3)
+    for (const block of blocks(source)) expect(source.slice(block.from, block.to)).toBe(block.source)
+    expect(renderMarkdown('![alt][pic]', source)).toContain('data-local-src="assets/a.png"')
+  })
   it('keeps blank lines outside block replacements and locates real headings', () => {
     const source = '# 第一章\n\n\n```md\n# 假标题\n```\n\n## 第二章\n'
     expect(listHeadings(source).map(h => [h.text, h.line])).toEqual([['第一章', 1], ['第二章', 8]])

@@ -12,8 +12,11 @@ export function createMarkdownEditor(
   onChange: (text: string) => void,
   onPasteImages: (files: File[]) => void,
   identifier = '',
+  onCursor: (line: number) => void = () => {},
 ): EditorView {
+  const bom = initialText.startsWith('\uFEFF') ? '\uFEFF' : ''
   const extensions: Extension[] = [
+    EditorState.lineSeparator.of(initialText.includes('\r\n') ? '\r\n' : '\n'),
     history(),
     liveRendering(identifier),
     markdownLanguage(),
@@ -21,7 +24,8 @@ export function createMarkdownEditor(
     keymap.of([...markdownKeymap, ...defaultKeymap, ...historyKeymap, ...searchKeymap, indentWithTab]),
     EditorView.lineWrapping,
     EditorView.updateListener.of(update => {
-      if (update.docChanged) onChange(update.state.doc.toString())
+      if (update.docChanged) onChange(bom + update.state.sliceDoc())
+      if (update.selectionSet || update.docChanged) onCursor(update.state.doc.lineAt(update.state.selection.main.head).number)
     }),
     EditorView.domEventHandlers({
       paste(event) {
@@ -30,6 +34,12 @@ export function createMarkdownEditor(
         event.preventDefault()
         onPasteImages(files)
         return true
+      },
+      drop(event, view) {
+        if (view.state.readOnly) return false
+        const files = Array.from(event.dataTransfer?.files ?? []).filter(file => file.type.startsWith('image/'))
+        if (!files.length) return false
+        event.preventDefault(); onPasteImages(files); return true
       },
     }),
     EditorView.theme({
@@ -43,7 +53,7 @@ export function createMarkdownEditor(
       '.cm-selectionBackground': { background: 'color-mix(in srgb, var(--accent) 20%, transparent) !important' },
     }),
   ]
-  const state = EditorState.create({ doc: initialText, extensions })
+  const state = EditorState.create({ doc: initialText.replace(/^\uFEFF/, ''), extensions })
   return new EditorView({ state, parent })
 }
 

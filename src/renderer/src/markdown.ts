@@ -1,4 +1,4 @@
-﻿import { Marked } from 'marked'
+import { Marked, Lexer } from 'marked'
 import DOMPurify from 'dompurify'
 import hljs from 'highlight.js/lib/common'
 import mathExtension from '../../../third-party/marktext/packages/muya/src/utils/marked/extensions/math'
@@ -21,18 +21,22 @@ export function escapeHtml(text: string): string {
 export interface Heading { level: number; text: string; line: number; from: number; id: string }
 export interface MarkdownBlock { from: number; to: number; source: string; type: string }
 export function blocks(source: string): MarkdownBlock[] {
+  source = source.replaceAll('\r\n', '\n').replace(/^\uFEFF/, '')
   let offset = 0
   return markdown.lexer(source).flatMap(token => {
-    const from = offset; offset += token.raw.length
+    const from = source.indexOf(token.raw, offset); offset = from + token.raw.length
+    if (from < 0) return []
     const text = token.raw.replace(/\n+$/, '')
     if (token.type === 'space' || !text.trim()) return []
     return [{ from, to: from + text.length, source: text, type: token.type }]
   })
 }
 export function listHeadings(source: string): Heading[] {
+  source = source.replaceAll('\r\n', '\n').replace(/^\uFEFF/, '')
   const seen = new Map<string, number>(); let offset = 0
   return markdown.lexer(source).flatMap(token => {
-    const from = offset; offset += token.raw.length
+    const from = source.indexOf(token.raw, offset); offset = from + token.raw.length
+    if (from < 0) return []
     if (token.type !== 'heading') return []
     const text = token.text.replace(/\*\*|__|~~|`/g, '')
     const base = generateGithubSlug(text) || 'section'
@@ -41,9 +45,13 @@ export function listHeadings(source: string): Heading[] {
   })
 }
 export function renderMarkdown(source: string, allSource = source): string {
+  source = source.replace(/^\uFEFF/, '')
   const headings = listHeadings(allSource)
   const toc = '<nav class="document-toc"><strong>内容目录</strong>' + headings.map(h => '<a href="#' + h.id + '" data-line="' + h.line + '">' + escapeHtml(h.text) + '</a>').join('') + '</nav>'
-  const raw = markdown.parse(source, { async: false }).replace(/<p>\[TOC\]<\/p>/gi, toc)
+  const lexer = new Lexer(markdown.defaults)
+  if (source !== allSource) lexer.tokens.links = markdown.lexer(allSource).links
+  const tokens = lexer.lex(source)
+  const raw = markdown.parser(tokens).replace(/<p>\[TOC\]<\/p>/gi, toc)
   const clean = DOMPurify.sanitize(raw, { USE_PROFILES: { html: true, mathMl: true, svg: true }, FORBID_TAGS: ['style', 'iframe', 'form', 'object', 'embed'], ADD_ATTR: ['data-identifier', 'data-line'] })
   const template = document.createElement('template'); template.innerHTML = clean
   template.content.querySelectorAll<HTMLElement>('[style]').forEach(element => {

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { mkdtemp, readFile, readdir, rm, writeFile, mkdir } from 'node:fs/promises'
 import path from 'node:path'
-import { createNote, createFolder, deleteEntry, importImages, listLibrary, moveEntry, readNote, renameEntry, reorderEntries, saveNote, helpersForTests } from '../src/main/files'
+import { copyNote, libraryItemPath, createNote, createFolder, deleteEntry, importImages, listLibrary, moveEntry, readNote, renameEntry, reorderEntries, saveNote, helpersForTests } from '../src/main/files'
 
 const temporaryRoots: string[] = []
 async function library(): Promise<string> {
@@ -13,6 +13,19 @@ async function library(): Promise<string> {
 afterEach(async () => { await Promise.all(temporaryRoots.splice(0).map(root => rm(root, { recursive: true, force: true }))) })
 
 describe('lossless note storage', () => {
+  it('allows only one competing save against the same disk version', async () => {
+    const root = await library(); const note = await createNote(root)
+    const results = await Promise.allSettled([saveNote(root, note.path, 'first', note.stamp), saveNote(root, note.path, 'second', note.stamp)])
+    expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1)
+    expect((await readNote(root, note.path)).content).toBe('first')
+  })
+  it('rejects Windows devices, trailing dots and intermediate directory junctions', async () => {
+    const root = await library(); const outside = await library()
+    for (const name of ['CON', 'aux.txt', 'LPT9', 'bad.']) await expect(createFolder(root, '', name)).rejects.toThrow()
+    const { symlink } = await import('node:fs/promises')
+    await symlink(outside, path.join(root, 'escape'), 'junction'); await writeFile(path.join(outside, 'private.md'), 'private')
+    await expect(libraryItemPath(root, 'escape/private.md')).rejects.toThrow(/Symbolic/)
+  })
   it('saves and reopens repeated blank lines verbatim', async () => {
     const root = await library()
     const note = await createNote(root)
@@ -43,6 +56,27 @@ describe('lossless note storage', () => {
 })
 
 describe('managed image assets', () => {
+  it('copies reference and HTML images, keeps alt text and ignores code examples', async () => {
+    const root = await library(); const target = await library()
+    await mkdir(path.join(root, 'assets')); await writeFile(path.join(root, 'assets', 'a.png'), 'image')
+    const note = await createNote(root)
+    const markdown = '![assets/a.png](assets/a.png)\n\n![ref][pic]\n\n[pic]: assets/a.png\n\n<img src="assets/a.png">\n\n```md\n![sample](assets/a.png)\n```\n\n`![inline](assets/a.png)`'
+    const copy = await copyNote(root, note.path, target, 'copy.md', markdown, { hash: '', exists: false })
+    expect(copy.content).toContain('![assets/a.png](')
+    expect(copy.content).toContain('![sample](assets/a.png)')
+    expect(copy.content).toContain('`![inline](assets/a.png)`')
+    expect(copy.content).toMatch(/\[pic\]: \d{8}-\d{6}-\d{3}[/]a.png/)
+    expect(copy.content).toMatch(/src="\d{8}-\d{6}-\d{3}[/]a.png"/)
+    const folders = (await readdir(target)).filter(name => /^\d{8}-/.test(name)); expect(folders).toHaveLength(1)
+    expect((await readdir(path.join(target, folders[0]!))).filter(name => name.endsWith('.png'))).toHaveLength(1)
+  })
+  it('leaves source and destination untouched when move names collide', async () => {
+    const root = await library(); const note = await createNote(root); await createFolder(root, '', 'target')
+    await writeFile(path.join(root, 'target', note.path), 'existing')
+    await expect(moveEntry(root, note.path, 'target')).rejects.toThrow(/exists/)
+    expect((await readNote(root, note.path)).content).toBe('')
+    expect(await readFile(path.join(root, 'target', note.path), 'utf8')).toBe('existing')
+  })
   it('stores pasted images beside a document and hides their folder from browsing', async () => {
     const root = await library()
     const folder = await createFolder(root, '', '课程')

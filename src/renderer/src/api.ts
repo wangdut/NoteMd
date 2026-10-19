@@ -24,6 +24,12 @@ declare global {
   interface Window {
     activeNotePath?: string
     noteMd: {
+      pickImages(): Promise<PasteImage[]>
+      duplicate(relative: string): Promise<string>
+      copyPath(relative: string): Promise<void>
+      writeDraft(identifier: string, content: string, stamp: NoteStamp): Promise<void>
+      listDrafts(): Promise<Array<{ id: string; path: string; updatedAt: number }>>
+      recover(id: string): Promise<OpenNote>
       openLink(url: string): Promise<void>
       saveAs(source: string, destination: string, content: string): Promise<OpenNote>
       closeReady(): void
@@ -46,7 +52,7 @@ declare global {
       reveal(relative: string): Promise<void>
       showAssets(relative: string): Promise<boolean>
       resolveImage(absolute: string, reference: string): Promise<string>
-      exportHtml(name: string, html: string): Promise<boolean>
+      exportHtml(name: string, html: string, format?: 'html' | 'pdf'): Promise<boolean>
       onCommand(callback: (command: string) => void): () => void
     }
   }

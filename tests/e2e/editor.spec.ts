@@ -1,4 +1,4 @@
-﻿import { test, expect, _electron as electron, type ElectronApplication, type Page } from '@playwright/test'
+import { test, expect, _electron as electron, type ElectronApplication, type Page } from '@playwright/test'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 let app: ElectronApplication
@@ -11,12 +11,12 @@ test.beforeEach(async () => {
   root = await fs.mkdtemp(path.resolve('test-results/runtime/app-'))
   const env: Record<string, string> = { ...Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)), NOTEMD_USER_DATA: path.join(root, 'profile'), NOTEMD_LIBRARY_PATH: path.join(root, 'library') }
   delete env.ELECTRON_RUN_AS_NODE
-  app = await electron.launch({ args: ['.'], env })
+  app = await electron.launch({ executablePath: process.env.NOTEMD_TEST_EXECUTABLE, args: process.env.NOTEMD_TEST_EXECUTABLE ? [] : ['.'], env })
   page = await app.firstWindow(); errors = []; page.on('pageerror', error => errors.push(error.message))
   await expect(page.getByRole('heading', { name: '让想法有迹可循' })).toBeVisible()
 })
 test.afterEach(async () => {
-  await page.screenshot({ path: path.join(root, 'final.png') })
+  if (!page.isClosed()) await page.screenshot({ path: path.join(root, 'final.png') })
   await app.close()
   expect(errors).toEqual([])
 })
@@ -73,3 +73,48 @@ test('image paste, hidden assets, rename, move and save-as preserve rendering', 
 })
 
 
+
+test('conflicts keep edits, recovery survives restart, close flushes and HTML/PDF export', async () => {
+  await command('new'); const editor = page.locator('.cm-content'); await editor.click(); await page.keyboard.insertText('original'); await command('save')
+  const file = (await fs.readdir(path.join(root,'library'))).find(name => name.endsWith('.md'))!
+  const absolute = path.join(root,'library',file)
+  await expect.poll(() => fs.readFile(absolute,'utf8')).toBe('original')
+  await fs.writeFile(absolute,'external')
+  await editor.click(); await page.keyboard.press('Control+End'); await page.keyboard.insertText(' unsaved')
+  await command('save'); await expect(page.getByRole('alert')).toContainText('changed on disk')
+  expect(await fs.readFile(absolute,'utf8')).toBe('external')
+  await expect.poll(async () => (await fs.readdir(path.join(root,'profile','recovery')).catch(()=>[])).filter(name=>name.endsWith('.json')).length).toBe(1)
+  const env: Record<string,string> = { ...Object.fromEntries(Object.entries(process.env).filter((e): e is [string,string] => e[1] !== undefined)), NOTEMD_USER_DATA:path.join(root,'profile'),NOTEMD_LIBRARY_PATH:path.join(root,'library') };delete env.ELECTRON_RUN_AS_NODE
+  await app.evaluate(({app})=>app.exit(0)).catch(()=>{})
+  app=await electron.launch({executablePath:process.env.NOTEMD_TEST_EXECUTABLE,args:process.env.NOTEMD_TEST_EXECUTABLE?[]:['.'],env});page=await app.firstWindow();page.on('pageerror',err=>errors.push(err.message))
+  await page.getByRole('button',{name:'恢复 '+file,exact:true}).click();await expect(page.locator('.cm-content')).toContainText('unsaved')
+  const copy = path.join(root,'恢复副本.md')
+  await app.evaluate(({dialog},file)=>{dialog.showSaveDialog=async()=>({canceled:false,filePath:file})},copy)
+  await command('save-as');await expect(page.locator('.document-title')).toContainText('恢复副本.md');expect(await fs.readFile(copy,'utf8')).toBe('original unsaved')
+  const html = path.join(root,'导出.html')
+  await app.evaluate(({dialog},file)=>{dialog.showSaveDialog=async()=>({canceled:false,filePath:file})},html)
+  await command('export-html');await expect.poll(()=>fs.readFile(html,'utf8').catch(()=>'' )).toContain('original unsaved')
+  await expect(page.locator('.app-shell')).toHaveAttribute('aria-busy','false')
+  const pdf=path.join(root,'导出.pdf')
+  await app.evaluate(({dialog},file)=>{dialog.showSaveDialog=async()=>({canceled:false,filePath:file})},pdf)
+  await command('export-pdf');await expect.poll(()=>fs.readFile(pdf).then(b=>b.subarray(0,5).toString(),()=>''),{timeout:20000}).toBe('%PDF-')
+  await expect(page.locator('.app-shell')).toHaveAttribute('aria-busy','false')
+  await page.locator('.cm-content').click();await page.keyboard.press('Control+End');await page.keyboard.insertText(' on close')
+  await command('close'); await expect.poll(()=>fs.readFile(copy,'utf8')).toContain('on close')
+})
+
+test('folder and document sorting, copy, task toggle, CRLF roundtrip and read-only mode', async()=>{
+  await fs.writeFile(path.join(root,'library','A.md'),'# 标题\r\n\r\n- [ ] 任务\r\n\r\n结尾\r\n')
+  await fs.writeFile(path.join(root,'library','B.md'),'B')
+  await command('sidebar-files');await page.getByTitle('刷新',{exact:true}).click()
+  const a=page.locator('.file-row').filter({hasText:'A.md'}),b=page.locator('.file-row').filter({hasText:'B.md'})
+  await b.dragTo(a,{targetPosition:{x:80,y:2}})
+  await expect(page.locator('.file-row').first()).toContainText('B.md')
+  await a.click(); await expect(page.locator('.live-block input')).toBeVisible();await page.locator('.live-block input').click()
+  await command('save');await expect.poll(()=>fs.readFile(path.join(root,'library','A.md'),'utf8')).toContain('- [x]')
+  const saved=await fs.readFile(path.join(root,'library','A.md'),'utf8');expect(saved.replaceAll('\r\n','')).not.toContain('\n')
+  await command('mode-read');await page.locator('.cm-content').click();await page.keyboard.press('Enter');await page.keyboard.insertText('SHOULD NOT INSERT');await command('save')
+  expect(await fs.readFile(path.join(root,'library','A.md'),'utf8')).toBe(saved)
+  await a.click({button:'right'});await page.getByRole('button',{name:'创建副本',exact:true}).click();await expect(page.locator('.file-row')).toHaveCount(3)
+  await a.click({button:'right'});await page.getByRole('button',{name:'复制路径',exact:true}).click();expect(await app.evaluate(({clipboard})=>clipboard.readText())).toBe(path.join(root,'library','A.md'))
+})

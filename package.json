@@ -11,7 +11,7 @@
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "build": "tsc --noEmit && vite build && node scripts/build-main.mjs",
-    "start": "electron .",
+    "start": "node scripts/start.mjs",
     "test": "vitest run --config vitest.config.ts",
     "test:e2e": "playwright test",
     "check": "tsc --noEmit",
@@ -60,16 +60,18 @@
       "dist/**/*",
       "LICENSE",
       "THIRD_PARTY_NOTICES.md",
-      "third-party/**/*"
+      "third-party/**/*",
+      "resources/**/*"
     ],
     "win": {
       "target": [
         "portable"
       ],
       "icon": "resources/icon.ico",
-      "signAndEditExecutable": false
+      "signExecutable": false
     },
-    "artifactName": "NoteMd-${version}-${arch}.${ext}"
+    "artifactName": "NoteMd-${version}-${arch}.${ext}",
+    "electronDist": "node_modules/electron/dist"
   },
   "allowScripts": {
     "electron@42.11.15": true,

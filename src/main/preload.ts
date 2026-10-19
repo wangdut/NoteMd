@@ -1,6 +1,12 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
 contextBridge.exposeInMainWorld('noteMd', {
+  pickImages: () => ipcRenderer.invoke('notemd:pick-images'),
+  duplicate: (relative: string) => ipcRenderer.invoke('notemd:duplicate', relative),
+  copyPath: (relative: string) => ipcRenderer.invoke('notemd:copy-path', relative),
+  writeDraft: (identifier: string, content: string, stamp: { hash: string; exists: boolean }) => ipcRenderer.invoke('notemd:draft', identifier, content, stamp),
+  listDrafts: () => ipcRenderer.invoke('notemd:drafts'),
+  recover: (id: string) => ipcRenderer.invoke('notemd:recover', id),
   openLink: (url: string) => ipcRenderer.invoke('notemd:open-link', url),
   saveAs: (source: string, destination: string, content: string) => ipcRenderer.invoke('notemd:save-as', source, destination, content),
   closeReady: () => ipcRenderer.send('notemd:close-ready'),
@@ -23,7 +29,7 @@ contextBridge.exposeInMainWorld('noteMd', {
   reveal: (relative: string) => ipcRenderer.invoke('notemd:reveal', relative),
   showAssets: (relative: string) => ipcRenderer.invoke('notemd:show-assets', relative),
   resolveImage: (absolute: string, reference: string) => ipcRenderer.invoke('notemd:resolve-image', absolute, reference),
-  exportHtml: (name: string, html: string) => ipcRenderer.invoke('notemd:export-html', name, html),
+  exportHtml: (name: string, html: string, format: string = 'html') => ipcRenderer.invoke('notemd:export-html', name, html, format),
   onCommand: (callback: (command: string) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, command: string) => callback(command)
     ipcRenderer.on('notemd:command', listener)

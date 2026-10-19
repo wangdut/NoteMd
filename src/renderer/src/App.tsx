@@ -1,4 +1,5 @@
-﻿import { useEffect, useMemo, useRef, useState, type JSX } from 'react'
+import logo from './logo.svg'
+import { useEffect, useMemo, useRef, useState, type JSX } from 'react'
 import { BookOpen, Bold, Braces, Code2, FilePlus2, Heading2, Italic, Library, Link2, List, ListChecks, Menu, PanelLeft, Save, Search, Sparkles, Table2, X, Undo2, Redo2 } from 'lucide-react'
 import type { EditorView } from '@codemirror/view'
 import { undo, redo } from '@codemirror/commands'
@@ -25,6 +26,7 @@ export default function App(): JSX.Element {
   const [identifier, setIdentifier] = useState('')
   const [revision, setRevision] = useState(0)
   const [content, setContent] = useState('')
+  const [cursorLine, setCursorLine] = useState(1)
   const [dirty, setDirty] = useState(false)
   const [mode, setMode] = useState<EditorMode>('live')
   const [status, setStatus] = useState('准备就绪')
@@ -39,11 +41,12 @@ export default function App(): JSX.Element {
   const [palette, setPalette] = useState(false)
   const [contextMenu, setContextMenu] = useState<MenuState>(null)
   const [modal, setModal] = useState<ModalState | null>(null)
+  const [drafts, setDrafts] = useState<Array<{ id: string; path: string; updatedAt: number }>>([])
   const editorHost = useRef<HTMLDivElement>(null)
   const sidebarHost = useRef<HTMLElement>(null)
   const editor = useRef<EditorView | null>(null)
   const session = useRef<DocumentSession | null>(null)
-  const actionLock = useRef(false)
+  const actionQueue = useRef<Promise<void>>(Promise.resolve())
   const commandRef = useRef<(command: string) => Promise<void>>(async () => {})
   const zoomRef = useRef({ editorZoom, tocZoom })
   const headings = useMemo(() => listHeadings(content), [content])
@@ -52,9 +55,12 @@ export default function App(): JSX.Element {
 
   function report(err: unknown) { const message = err instanceof Error ? err.message : String(err); setError(message); setStatus('操作未完成，编辑内容已保留') }
   async function run(action: () => Promise<void>) {
-    if (actionLock.current) return
-    actionLock.current = true; setBusy(true)
-    try { await action() } catch (err) { report(err) } finally { actionLock.current = false; setBusy(false) }
+    const task = actionQueue.current.then(async () => {
+      setBusy(true)
+      try { await action() } catch (err) { report(err) } finally { setBusy(false) }
+    })
+    actionQueue.current = task
+    await task
   }
   async function refresh(parent = folder) { setEntries(await window.noteMd.list(parent)) }
   async function preference(key: string, value: unknown) { setSettings(await window.noteMd.setPreference(key, value)) }
@@ -65,10 +71,11 @@ export default function App(): JSX.Element {
     await current.save()
     if (session.current === current) { setDirty(current.dirty); setStatus('已保存 · ' + new Date().toLocaleTimeString('zh-CN')); setError('') }
   }
-  function adopt(path: string, note: OpenNote) {
+  function adopt(path: string, note: OpenNote, recovered = false) {
     session.current = new DocumentSession(path, note, window.noteMd.saveNote)
+    if (recovered) session.current.markRecovered()
     window.activeNotePath = path
-    setIdentifier(path); setContent(note.content); setDirty(false); setRevision(n => n + 1); setError(''); setStatus('已打开')
+    setIdentifier(path); setContent(note.content); setCursorLine(1); setDirty(recovered); setRevision(n => n + 1); setError(''); setStatus(recovered ? '已恢复草稿' : '已打开')
   }
   async function openNote(path: string) {
     await flush()
@@ -87,7 +94,7 @@ export default function App(): JSX.Element {
   }
   async function pasteImages(files: File[]) {
     const current = session.current; const view = editor.current
-    if (!current || !view || mode === 'read') return
+    if (!current || !view || view.state.readOnly) return
     try {
       const images = await Promise.all(files.map(async file => ({ name: file.name || '粘贴图片.png', mimeType: file.type, bytes: new Uint8Array(await file.arrayBuffer()) })))
       const result = await window.noteMd.importImages(current.identifier, current.content, images)
@@ -118,6 +125,15 @@ export default function App(): JSX.Element {
     else if (command === 'save') await flush()
     else if (command === 'save-as') await saveAs()
     else if (command === 'close') { await flush(); window.noteMd.closeReady() }
+    else if (command === 'recovery') setDrafts(await window.noteMd.listDrafts())
+    else if (command === 'image' && editor.current && session.current && mode !== 'read') {
+      const images = await window.noteMd.pickImages()
+      if (images.length) { const result = await window.noteMd.importImages(session.current.identifier, session.current.content, images); insertText(editor.current, '\n' + result.markdown + '\n'); await flush() }
+    }
+    else if (command === 'color' && editor.current && mode !== 'read') {
+      const color = await ask('字体颜色', '#d46a45', '输入十六进制颜色，如 #128977。')
+      if (color !== null) { if (!/^#[a-f\d]{6}$/i.test(color)) throw new Error('请输入 #RRGGBB 格式的颜色。'); wrapSelection(editor.current, '<span style="color:' + color + '">', '</span>') }
+    }
     else if (command === 'choose-library') {
       await flush(); const next = await window.noteMd.chooseLibrary()
       if (next) { setSettings(next); setFolder(''); setIdentifier(''); session.current = null; setContent(''); setRevision(n => n + 1); await refresh('') }
@@ -128,7 +144,7 @@ export default function App(): JSX.Element {
     else if (command.startsWith('theme-')) { const value = command.slice(6) as AppState['theme']; setTheme(value); await preference('theme', value) }
     else if (command.startsWith('mode-')) setMode(command.slice(5) as EditorMode)
     else if (command.startsWith('zoom-')) { const next = command === 'zoom-reset' ? 100 : clamp(zoomRef.current.editorZoom + (command === 'zoom-in' ? 10 : -10)); setEditorZoom(next); await preference('editorZoom', next) }
-    else if (command === 'export-html') { if (session.current) { await flush(); const host = document.createElement('article'); host.innerHTML = renderMarkdown(session.current.content); await Promise.all(Array.from(host.querySelectorAll<HTMLImageElement>('img[data-local-src]')).map(async img => { img.src = await window.noteMd.resolveImage(session.current!.identifier, img.dataset.localSrc!); delete img.dataset.localSrc })); await window.noteMd.exportHtml(activeName, host.innerHTML) } }
+    else if (command === 'export-html' || command === 'export-pdf') { if (session.current) { await flush(); const host = document.createElement('article'); host.innerHTML = renderMarkdown(session.current.content); await Promise.all(Array.from(host.querySelectorAll<HTMLImageElement>('img[data-local-src]')).map(async img => { img.src = await window.noteMd.resolveImage(session.current!.identifier, img.dataset.localSrc!); delete img.dataset.localSrc })); await window.noteMd.exportHtml(activeName, host.innerHTML, command === 'export-pdf' ? 'pdf' : 'html') } }
     else if (command === 'print') { setMode('read'); setTimeout(() => window.print(), 150) }
     else if (command === 'reveal' && session.current) await window.noteMd.reveal(session.current.identifier)
     else if (command === 'about' || command === 'shortcuts') await ask(command === 'about' ? '关于 NoteMd' : '快捷键', undefined, command === 'about' ? 'NoteMd 0.1.0 · MIT 开源。本地文件，实时编辑。部分 Markdown 语法扩展来自 MarkText，详见 THIRD_PARTY_NOTICES.md。' : 'Ctrl+N 新建 · Ctrl+O 打开 · Ctrl+S 保存 · Ctrl+Shift+S 另存为 · Ctrl+F 查找 · Ctrl+H 替换 · Ctrl+B 加粗 · Ctrl+I 斜体 · Ctrl+滚轮独立缩放正文/目录 · Ctrl+Shift+P 命令面板')
@@ -144,6 +160,8 @@ export default function App(): JSX.Element {
     await refresh()
   }
   async function contextAction(action: string, item: LibraryEntry) {
+    if (action === 'duplicate') { await flush(); await window.noteMd.duplicate(item.path); await refresh() }
+    if (action === 'copy-path') { await window.noteMd.copyPath(item.path); setStatus('路径已复制') }
     if (action === 'rename') { const name = await ask('重命名', item.name); if (name && name !== item.name) await relocate(item, name, true) }
     if (action === 'move') { const destination = await ask('移动到文件库目录', '', '输入相对目录，例如：课程/第一周。留空表示根目录。'); if (destination !== null) await relocate(item, destination) }
     if (action === 'trash') {
@@ -159,6 +177,7 @@ export default function App(): JSX.Element {
 
   useEffect(() => {
     void window.noteMd.getState().then(async state => { setSettings(state); setTheme(state.theme); setEditorZoom(state.editorZoom); setTocZoom(state.tocZoom); await refresh('') }).catch(report)
+    void window.noteMd.listDrafts().then(setDrafts).catch(report)
     const off = window.noteMd.onCommand(command => { void commandRef.current(command) })
     const keyboard = (event: KeyboardEvent) => { if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === 'p') { event.preventDefault(); setPalette(value => !value) } }
     window.addEventListener('keydown', keyboard)
@@ -167,11 +186,17 @@ export default function App(): JSX.Element {
   useEffect(() => {
     const current = session.current
     if (!current || !editorHost.current) { editor.current?.destroy(); editor.current = null; return }
-    const view = createMarkdownEditor(editorHost.current, current.content, text => { current.edit(text); setContent(text); setDirty(current.dirty); setStatus('未保存') }, files => { void pasteImages(files) }, current.identifier)
+    const view = createMarkdownEditor(editorHost.current, current.content, text => { current.edit(text); setContent(text); setDirty(current.dirty); setStatus('未保存') }, files => { void pasteImages(files) }, current.identifier, setCursorLine)
     editor.current = view; setEditorMode(view, mode)
     return () => { view.destroy(); if (editor.current === view) editor.current = null }
   }, [revision])
-  useEffect(() => { if (editor.current) setEditorMode(editor.current, mode) }, [mode])
+  useEffect(() => { if (editor.current) setEditorMode(editor.current, mode, busy) }, [mode, busy, revision])
+  useEffect(() => {
+    const current = session.current
+    if (!current || !dirty) return
+    const timer = setTimeout(() => { void window.noteMd.writeDraft(current.identifier, current.content, current.stamp).catch(report) }, 150)
+    return () => clearTimeout(timer)
+  }, [content, dirty])
   useEffect(() => {
     if (!dirty || error || busy) return
     const timer = setTimeout(() => { void flush().catch(report) }, 850)
@@ -195,12 +220,13 @@ export default function App(): JSX.Element {
   useEffect(() => { const close = () => setContextMenu(null); window.addEventListener('click', close); return () => window.removeEventListener('click', close) }, [])
 
   return <div className={'app-shell ' + (focusMode ? 'is-focused' : '')} aria-busy={busy}>
-    <header className="app-header"><div className="brand-lockup"><div className="brand-mark">N</div><div><strong>NoteMd</strong><span>LOCAL / MARKDOWN</span></div></div><div className="document-title"><i className={dirty ? 'dirty-dot' : 'saved-dot'} />{activeName}{dirty ? ' · 未保存' : ''}</div><div className="header-actions"><button className="icon-button" title="查找正文" onClick={() => void commandRef.current('find')}><Search size={17} /></button><button className="icon-button" title="切换侧栏" onClick={() => setSidebar(value => value === 'toc' ? 'files' : 'toc')}><PanelLeft size={17} /></button><button className="icon-button" title="切换主题" onClick={() => void commandRef.current('theme-' + (theme === 'light' ? 'dark' : theme === 'dark' ? 'paper' : 'light'))}><Sparkles size={17} /></button><button className="save-button" disabled={!identifier || busy} onClick={() => void commandRef.current('save')}><Save size={15} />保存</button></div></header>
+    <header className="app-header"><div className="brand-lockup"><img className="brand-icon" src={logo} alt="NoteMd" /><div><strong>NoteMd</strong><span>LOCAL / MARKDOWN</span></div></div><div className="document-title"><i className={dirty ? 'dirty-dot' : 'saved-dot'} />{activeName}{dirty ? ' · 未保存' : ''}</div><div className="header-actions"><button className="icon-button" title="查找正文" onClick={() => void commandRef.current('find')}><Search size={17} /></button><button className="icon-button" title="切换侧栏" onClick={() => setSidebar(value => value === 'toc' ? 'files' : 'toc')}><PanelLeft size={17} /></button><button className="icon-button" title="切换主题" onClick={() => void commandRef.current('theme-' + (theme === 'light' ? 'dark' : theme === 'dark' ? 'paper' : 'light'))}><Sparkles size={17} /></button><button className="save-button" disabled={!identifier || busy} onClick={() => void commandRef.current('save')}><Save size={15} />保存</button></div></header>
     <div className="command-strip"><div className="command-group">{([[ 'new', '新建文档', FilePlus2 ], ['undo', '撤销', Undo2], ['redo', '重做', Redo2], ['bold', '加粗', Bold], ['italic', '斜体', Italic], ['heading-2', '标题', Heading2], ['codeblock', '代码块', Code2], ['bullet-list', '无序列表', List], ['task-list', '任务列表', ListChecks], ['table', '表格', Table2], ['link', '链接', Link2]] as const).map(([key, title, Icon]) => <button key={key} title={title} onClick={() => void commandRef.current(key)}><Icon size={16} /></button>)}</div><div className="mode-switcher">{([['live', '实时', Code2], ['source', '源码', Braces], ['read', '阅读', BookOpen]] as const).map(([key, label, Icon]) => <button key={key} className={mode === key ? 'active' : ''} onClick={() => setMode(key)}><Icon size={14} />{label}</button>)}</div></div>
     {error && <div className="error-banner" role="alert"><span>{error}</span><button onClick={() => void commandRef.current('save-as')}>另存副本</button><button onClick={() => void run(async () => { if (await ask('重新加载', undefined, '放弃当前未保存编辑，重新读取磁盘？') !== null && session.current) { const p = session.current.identifier; adopt(p, await (isExternal(p) ? window.noteMd.openExternal(p) : window.noteMd.openNote(p))) } })}>重新加载</button><button aria-label="关闭提示" onClick={() => setError('')}><X size={15} /></button></div>}
-    <main className="workspace">{!focusMode && <aside className="sidebar" ref={sidebarHost}><div className="sidebar-tabs"><button className={sidebar === 'toc' ? 'active' : ''} onClick={() => setSidebar('toc')}>目录</button><button className={sidebar === 'files' ? 'active' : ''} onClick={() => setSidebar('files')}><Library size={15} />文件库</button></div>{sidebar === 'toc' ? <TocPanel headings={headings} onSelect={line => { if (editor.current) goToLine(editor.current, line) }} /> : <><input className="library-search" placeholder="筛选当前目录…" aria-label="筛选文件" value={searchText} onChange={e => setSearchText(e.target.value)} /><FilesPanel folder={folder} entries={filtered} active={identifier} onFolder={p => { setFolder(p); void run(() => refresh(p)) }} onOpen={item => { if (item.kind === 'folder') { setFolder(item.path); void run(() => refresh(item.path)) } else void run(() => openNote(item.path)) }} onContext={(event, item) => { event.preventDefault(); setContextMenu({ x: Math.min(event.clientX, innerWidth - 240), y: Math.min(event.clientY, innerHeight - 300), item }) }} onNew={() => void commandRef.current('new')} onNewFolder={() => void commandRef.current('new-folder')} onUp={() => { const p = folder.split('/').slice(0, -1).join('/'); setFolder(p); void run(() => refresh(p)) }} onMove={(item, destination) => run(() => relocate(item, destination))} onReorder={names => run(async () => { if (searchText) throw new Error('清空筛选后再排序'); await window.noteMd.reorder(folder, names); await refresh() })} /></>}</aside>}
+    <main className="workspace">{!focusMode && <aside className="sidebar" ref={sidebarHost}><div className="sidebar-tabs"><button className={sidebar === 'toc' ? 'active' : ''} onClick={() => setSidebar('toc')}>目录</button><button className={sidebar === 'files' ? 'active' : ''} onClick={() => setSidebar('files')}><Library size={15} />文件库</button></div>{sidebar === 'toc' ? <TocPanel activeLine={cursorLine} headings={headings} onSelect={line => { if (editor.current) goToLine(editor.current, line) }} /> : <><input className="library-search" placeholder="筛选当前目录…" aria-label="筛选文件" value={searchText} onChange={e => setSearchText(e.target.value)} /><FilesPanel folder={folder} entries={filtered} active={identifier} onFolder={p => { setFolder(p); void run(() => refresh(p)) }} onOpen={item => { if (item.kind === 'folder') { setFolder(item.path); void run(() => refresh(item.path)) } else void run(() => openNote(item.path)) }} onContext={(event, item) => { event.preventDefault(); setContextMenu({ x: Math.min(event.clientX, innerWidth - 240), y: Math.min(event.clientY, innerHeight - 370), item }) }} onNew={() => void commandRef.current('new')} onNewFolder={() => void commandRef.current('new-folder')} onUp={() => { const p = folder.split('/').slice(0, -1).join('/'); setFolder(p); void run(() => refresh(p)) }} onMove={(item, destination) => run(() => relocate(item, destination))} onReorder={names => run(async () => { if (searchText) throw new Error('清空筛选后再排序'); await window.noteMd.reorder(folder, names); await refresh() })} /></>}</aside>}
     {contextMenu && <ContextMenu menu={contextMenu} onClose={() => setContextMenu(null)} onAction={action => { const item = contextMenu.item; setContextMenu(null); void run(() => contextAction(action, item)) }} />}
     <section className="editor-area"><div className="editor-breadcrumb"><span title={settings?.libraryPath}>{settings?.libraryPath ?? 'NoteMd 文档库'}</span><span>{folder}</span><span className="breadcrumb-spacer" /><span className="save-state" title={status} role="status">{busy ? '正在处理…' : status}</span></div><div className={'editor-grid mode-' + mode}><div className="source-pane"><div ref={editorHost} className="editor-host" /></div>{!identifier && <EmptyState onNew={() => void commandRef.current('new')} onOpen={() => void commandRef.current('open')} />}</div><footer className="status-bar"><span>{words(content)} 字</span><span>{content.split('\n').length} 行</span><span>{editorZoom}%</span><span className="status-spacer" /><span>UTF-8</span><span>Markdown</span></footer></section></main>
+    {drafts.length > 0 && <div className="recovery-panel" role="region" aria-label="恢复草稿"><strong>发现未保存的恢复草稿</strong>{drafts.map(d => <button key={d.id} onClick={() => void run(async () => { await flush(); const note = await window.noteMd.recover(d.id); adopt(note.path, note, true); setDrafts(list => list.filter(item => item.id !== d.id)) })}>恢复 {baseName(d.path)}</button>)}<button onClick={() => setDrafts([])}>稍后处理</button></div>}
     <button className="command-palette-trigger" title="命令面板" onClick={() => setPalette(true)}><Menu size={16} /></button>
     {palette && <CommandPalette onClose={() => setPalette(false)} onRun={command => { setPalette(false); void commandRef.current(command) }} />}
     {modal && <Dialog key={modal.title} state={modal} close={value => { modal.resolve(value); setModal(null) }} />}
@@ -214,4 +240,3 @@ function CommandPalette({ onClose, onRun }: { onClose: () => void; onRun: (comma
   const [query, setQuery] = useState('')
   return <div className="command-backdrop" onClick={onClose} onKeyDown={event => { if (event.key === 'Escape') onClose() }}><div className="command-bar" role="dialog" aria-label="命令面板" onClick={event => event.stopPropagation()}><div className="command-input"><Search size={18} /><input autoFocus placeholder="输入命令…" value={query} onChange={e => setQuery(e.target.value)} /></div><div className="command-results">{commands.filter(([, label]) => label!.includes(query)).map(([key, label, shortcut]) => <button key={key} onClick={() => onRun(key!)}><span>{label}</span><kbd>{shortcut}</kbd></button>)}</div></div></div>
 }
-

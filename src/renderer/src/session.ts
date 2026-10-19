@@ -4,7 +4,7 @@ import type { OpenNote } from './api'
 /** A session owns its disk version; a save never acknowledges later edits. */
 export class DocumentSession {
   content: string
-  private saved: string
+  private saved: string | null
   stamp: NoteStamp
   private pending?: Promise<void>
   constructor(readonly identifier: string, note: OpenNote, private write: (path: string, content: string, stamp: NoteStamp) => Promise<NoteStamp>) {
@@ -13,6 +13,7 @@ export class DocumentSession {
   }
   get dirty(): boolean { return this.content !== this.saved }
   edit(content: string): void { this.content = content }
+  markRecovered(): void { this.saved = null }
   async save(): Promise<void> {
     if (this.pending) return this.pending
     this.pending = this.drain()

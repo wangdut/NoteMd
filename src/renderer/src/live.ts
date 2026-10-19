@@ -8,14 +8,23 @@ const modeField = StateField.define<EditorMode>({ create: () => 'live', update: 
 const editable = new Compartment()
 class BlockWidget extends WidgetType {
   constructor(readonly source: string, readonly from: number, readonly identifier: string, readonly mode: EditorMode, readonly documentSource: string) { super() }
-  eq(other: BlockWidget): boolean { return this.source === other.source && this.from === other.from && this.identifier === other.identifier && this.mode === other.mode && (!/\[toc\]/i.test(this.source) || this.documentSource === other.documentSource) }
+  eq(other: BlockWidget): boolean { return this.source === other.source && this.from === other.from && this.identifier === other.identifier && this.mode === other.mode && this.documentSource === other.documentSource }
   toDOM(view: EditorView): HTMLElement {
     const node = document.createElement('div')
     node.className = 'live-block markdown-body'
     node.innerHTML = renderMarkdown(this.source, this.documentSource)
+    if (this.mode !== 'read') node.querySelectorAll<HTMLInputElement>('input[type=checkbox]').forEach(input => { input.disabled = false })
     resolveImages(node, this.identifier)
     node.addEventListener('mousedown', event => {
       const target = event.target as HTMLElement
+      if (view.state.readOnly && this.mode !== 'read') return
+      if (target instanceof HTMLInputElement && target.type === 'checkbox' && this.mode !== 'read') {
+        event.preventDefault()
+        const index = Array.from(node.querySelectorAll('input[type=checkbox]')).indexOf(target)
+        const match = [...this.source.matchAll(/^\s*(?:[-+*]|\d+[.)]) \[([ xX])\]/gm)][index]
+        if (match) { const from = this.from + match.index! + match[0].lastIndexOf('[') + 1; view.dispatch({ changes: { from, to: from + 1, insert: match[1] === ' ' ? 'x' : ' ' } }) }
+        return
+      }
       const link = target.closest('a')
       if (link) {
         event.preventDefault()
@@ -54,6 +63,6 @@ export function liveRendering(identifier: string) {
     return Decoration.set(ranges, true)
   }
 }
-export function setEditorMode(view: EditorView, mode: EditorMode): void {
-  view.dispatch({ effects: [changeMode.of(mode), editable.reconfigure(EditorView.editable.of(mode !== 'read'))] })
+export function setEditorMode(view: EditorView, mode: EditorMode, busy = false): void {
+  view.dispatch({ effects: [changeMode.of(mode), editable.reconfigure([EditorView.editable.of(mode !== 'read' && !busy), EditorState.readOnly.of(mode === 'read' || busy)])] })
 }

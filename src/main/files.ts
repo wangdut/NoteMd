@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
+import { Lexer } from 'marked'
 
 export interface NoteStamp { hash: string; exists: boolean }
 export interface LibraryEntry { name: string; path: string; kind: 'file' | 'folder'; modifiedAt: number; size?: number }
@@ -202,6 +203,9 @@ function encodedRelativePath(folder: string, file: string): string {
 }
 
 export async function importImages(rootPath: string, relative: string, content: string, images: Array<{ name: string; mimeType: string; bytes: Uint8Array }>): Promise<{ paths: string[]; markdown: string }> {
+  return serialized('images:' + path.resolve(rootPath, relative).toLowerCase(), () => importImagesUnqueued(rootPath, relative, content, images))
+}
+async function importImagesUnqueued(rootPath: string, relative: string, content: string, images: Array<{ name: string; mimeType: string; bytes: Uint8Array }>): Promise<{ paths: string[]; markdown: string }> {
   if (!images.length) return { paths: [], markdown: '' }
   const root = await ensureLibrary(rootPath)
   const note = await resolveInside(root, relative)
@@ -240,6 +244,16 @@ export async function importImages(rootPath: string, relative: string, content: 
 
 function imageDestinations(markdown: string): Array<{ start: number; end: number; reference: string }> {
   const output: Array<{ start: number; end: number; reference: string }> = []
+  const excluded: Array<[number, number]> = []
+  let offset = 0
+  for (const token of Lexer.lex(markdown.replaceAll('\r\n', '\n'))) {
+    const raw = markdown.includes('\r\n') ? token.raw.replaceAll('\n', '\r\n') : token.raw
+    const from = markdown.indexOf(raw, offset)
+    if (from < 0) continue
+    offset = from + raw.length
+    if (token.type === 'code') excluded.push([from, offset])
+  }
+  for (const match of markdown.matchAll(/(`+)([^`]|(?!\1)`)*?\1/g)) excluded.push([match.index!, match.index! + match[0].length])
   const pattern = /!\[(?:\\.|[^\]\\])*\]\(\s*(?:<([^>]+)>|((?:\\.|[^()\s]|\([^()]*\))+))[^)]*\)/gd
   for (const match of markdown.matchAll(pattern)) {
     const ref = match[1] ?? match[2]
@@ -256,7 +270,7 @@ function imageDestinations(markdown: string): Array<{ start: number; end: number
       output.push({ start, end: start + ref.length, reference: ref })
     }
   }
-  return output
+  return output.filter(item => !excluded.some(([from, to]) => item.start >= from && item.start < to))
 }
 
 async function portableMarkdown(root: string, source: string, target: string, markdown: string): Promise<{ content: string; assetFolder: string | null }> {
@@ -422,7 +436,7 @@ export async function resolveImageDataUrl(notePath: string, reference: string): 
   const stat = await fs.lstat(realTarget)
   if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 25 * 1024 * 1024) throw new Error('Image is missing or exceeds 25 MB.')
   const bytes = await fs.readFile(realTarget)
-  const mime = Object.entries(MIME_EXTENSION).find(([, extension]) => extension === path.extname(target).toLowerCase())?.[0] ?? 'application/octet-stream'
+  const mime = path.extname(target).toLowerCase() === '.jpeg' ? 'image/jpeg' : Object.entries(MIME_EXTENSION).find(([, extension]) => extension === path.extname(target).toLowerCase())?.[0] ?? 'application/octet-stream'
   return `data:${mime};base64,${bytes.toString('base64')}`
 }
 
