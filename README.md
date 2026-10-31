@@ -4,7 +4,9 @@ MIT 开源的 Windows Markdown 桌面编辑器。默认目录侧栏，单窗格�
 
 ## 运行
 
-Windows x64 便携包在 `release/NoteMd-0.2.0/NoteMd-0.2.0-x64.exe`；目录版位于 `release/NoteMd-0.2.0/win-unpacked/NoteMd.exe`。目录版需保留整个 `win-unpacked` 文件夹。
+当前 Windows x64 单文件便携包在 `release/NoteMd-0.2.0-x64.exe`（2026-11-01 构建，包含反馈修复）；目录版位于 `release/win-unpacked/NoteMd.exe`。目录版需保留整个 `win-unpacked` 文件夹。`release/NoteMd-0.1.0/` 和 `release/NoteMd-0.2.0/` 是历史构建，名称相同不代表内容最新。
+
+在项目目录执行 `node scripts/portable-smoke.mjs` 可验证当前便携包的启动、新建、保存和退出，也可以在命令末尾传入其他 EXE 的路径。验证使用隔离文档库和配置目录。
 
 开发环境需要 Node.js 22 或更高版本、npm 和 Git：
 
