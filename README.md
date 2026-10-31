@@ -15,6 +15,8 @@ MIT 开源的 Windows Markdown 桌面编辑器。默认目录侧栏，单窗格�
 
 每个发行目录附带 README、CHANGELOG、LICENSE、第三方许可、SHA256SUMS 和构建清单。版本变化见 [更新日志](CHANGELOG.md)，发布方式见 [发行约定](docs/releasing.md)。
 
+0.3.0 验证：24 项单元测试、目录版 15 项桌面回归、便携版版本显示/启动/保存/退出通过；详细记录见 [验证记录](docs/progress.md)。
+
 在项目目录执行 `npm.cmd run test:portable` 可验证当前版本便携包的“关于”版本、启动、新建、保存和退出；`node scripts/portable-smoke.mjs <EXE路径>` 可指定其他程序。验证使用隔离文档库和配置目录。
 
 开发环境需要 Node.js 22 或更高版本、npm 和 Git：

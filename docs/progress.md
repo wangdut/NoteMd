@@ -6,7 +6,12 @@
 - 新增 CHANGELOG.md、docs/releasing.md；同步 README、需求、设计、交互说明、示例和工作区项目索引。
 - 完整打包自动生成本版本说明、许可、更新日志、三个产物的 SHA256 校验与构建清单。
 - 新增运行时/关于页面版本一致性回归；便携验证读取版本目录并检查关于页面。
-- 本次验证结果将在打包与测试结束后记录；以下记录均属于较早构建。
+- 验证完成：TypeScript 与脚本语法检查通过，24 项单元测试通过，0.3.0 目录版的完整 15 项 Electron 回归通过；新增运行时/关于页面版本一致性用例通过。
+- `npm.cmd run dist:win` 退出码 0；`npm.cmd run test:portable` 直接运行本版本便携 EXE，确认关于版本 0.3.0、新建、输入、保存内容一致及正常退出（退出码 0）。
+- 便携包：`release/NoteMd-0.3.0/NoteMd-0.3.0-x64.exe`，95,605,618 字节；SHA256：`B2745073F44BDF4AC38D1F887F745DAF7E7B33ACBA471D4C81F1C8D3216F6343`。
+- 目录版：`release/NoteMd-0.3.0/win-unpacked/NoteMd.exe`；两个 EXE 文件属性均为 0.3.0（目录版 ProductVersion 为 Windows 四段格式 0.3.0.0）。构建清单记录源提交 `c5f03fcceccb55e07aeda20b90dcff4f916971ec`，工作区状态为干净。
+- 根目录的旧 0.2.0 便携包、win-unpacked、校验与构建日志已归档到 `release/archive/NoteMd-0.2.0-feedback-20261101/`，原 0.1.0/0.2.0 版本目录保留。release 根目录只保留版本目录、archive 与当前版本索引。
+- 测试均使用项目内隔离目录，未改动用户文档；以下记录均属于较早构建。
 
 ## 历史：2026-11-01 临时 0.2.0 便携包重建
 
