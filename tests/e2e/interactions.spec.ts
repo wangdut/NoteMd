@@ -1,7 +1,7 @@
 import { test, expect, _electron as electron, type ElectronApplication, type Page } from '@playwright/test'
-import { promises as fs } from 'node:fs'
+import { promises as fs, readFileSync } from 'node:fs'
 import path from 'node:path'
-import { version } from '../../package.json'
+const { version } = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as { version: string }
 async function launch(source:string){
   const root=await fs.mkdtemp(path.resolve('test-results/interaction-'));await fs.mkdir(path.join(root,'library'));await fs.writeFile(path.join(root,'library','交互测试.md'),source)
   const env:Record<string,string>={...Object.fromEntries(Object.entries(process.env).filter((e):e is [string,string]=>e[1]!==undefined)),NOTEMD_USER_DATA:path.join(root,'profile'),NOTEMD_LIBRARY_PATH:path.join(root,'library')};delete env.ELECTRON_RUN_AS_NODE
