@@ -1,4 +1,5 @@
 import logo from './logo.svg'
+import { version as appVersion } from '../../../package.json'
 import { useEffect, useMemo, useRef, useState, type JSX } from 'react'
 import { BookOpen, Bold, Braces, Code2, FilePlus2, Heading2, Italic, Library, Link2, List, ListOrdered, ListChecks, Menu, PanelLeft, Save, Search, Sparkles, Table2, X, Undo2, Redo2, Palette } from 'lucide-react'
 import type { EditorView } from '@codemirror/view'
@@ -196,7 +197,7 @@ export default function App(): JSX.Element {
     else if (command === 'export-html' || command === 'export-pdf') { if (session.current) { await flush(); const host = document.createElement('article'); host.innerHTML = renderMarkdown(session.current.content); await Promise.all(Array.from(host.querySelectorAll<HTMLImageElement>('img[data-local-src]')).map(async img => { img.src = await window.noteMd.resolveImage(session.current!.identifier, img.dataset.localSrc!); delete img.dataset.localSrc })); await window.noteMd.exportHtml(activeName, host.innerHTML, command === 'export-pdf' ? 'pdf' : 'html') } }
     else if (command === 'print') { setMode('read'); setTimeout(() => window.print(), 150) }
     else if (command === 'reveal' && session.current) await window.noteMd.reveal(session.current.identifier)
-    else if (command === 'about' || command === 'shortcuts') await ask(command === 'about' ? '关于 NoteMd' : '快捷键', undefined, command === 'about' ? 'NoteMd 0.2.0 · MIT 开源。本地文件，实时编辑。部分 Markdown 语法扩展来自 MarkText，详见 THIRD_PARTY_NOTICES.md。' : 'Ctrl+N 新建 · Ctrl+O 打开 · Ctrl+S 保存 · Ctrl+Shift+S 另存为 · Ctrl+F 查找 · Ctrl+H 替换 · Ctrl+B 加粗 · Ctrl+I 斜体 · Ctrl+滚轮独立缩放正文/目录 · Ctrl+Shift+P 命令面板')
+    else if (command === 'about' || command === 'shortcuts') await ask(command === 'about' ? '关于 NoteMd' : '快捷键', undefined, command === 'about' ? 'NoteMd ' + appVersion + ' · MIT 开源。本地文件，实时编辑。部分 Markdown 语法扩展来自 MarkText，详见 THIRD_PARTY_NOTICES.md。' : 'Ctrl+N 新建 · Ctrl+O 打开 · Ctrl+S 保存 · Ctrl+Shift+S 另存为 · Ctrl+F 查找 · Ctrl+H 替换 · Ctrl+B 加粗 · Ctrl+I 斜体 · Ctrl+滚轮独立缩放正文/目录 · Ctrl+Shift+P 命令面板')
     else format(command)
   }
   commandRef.current = command => {

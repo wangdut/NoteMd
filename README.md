@@ -1,12 +1,21 @@
-# NoteMd
+# NoteMd 0.3.0
 
 MIT 开源的 Windows Markdown 桌面编辑器。默认目录侧栏，单窗格即时渲染，源文本保留连续空行。
 
 ## 运行
 
-当前 Windows x64 单文件便携包在 `release/NoteMd-0.2.0-x64.exe`（2026-11-01 构建，包含反馈修复）；目录版位于 `release/win-unpacked/NoteMd.exe`。目录版需保留整个 `win-unpacked` 文件夹。`release/NoteMd-0.1.0/` 和 `release/NoteMd-0.2.0/` 是历史构建，名称相同不代表内容最新。
+当前版本为 **0.3.0**，便携版和目录免安装版统一放在 `release/NoteMd-0.3.0/`，使用相同功能代码。
 
-在项目目录执行 `node scripts/portable-smoke.mjs` 可验证当前便携包的启动、新建、保存和退出，也可以在命令末尾传入其他 EXE 的路径。验证使用隔离文档库和配置目录。
+| 运行形式 | 入口 | 携带方式 |
+| --- | --- | --- |
+| 单文件便携版 | `release/NoteMd-0.3.0/NoteMd-0.3.0-x64.exe` | 直接双击，程序只需携带这一个 EXE |
+| 目录免安装版 | `release/NoteMd-0.3.0/win-unpacked/NoteMd.exe` | 必须保留整个 `win-unpacked` 文件夹 |
+
+当前不提供安装向导版。设置与文档仍使用配置的数据目录，不会自动随程序搬移。旧版本保留在各自版本目录，旧版零散构建归档到 `release/archive/`。新版本不会覆盖旧版本目录。
+
+每个发行目录附带 README、CHANGELOG、LICENSE、第三方许可、SHA256SUMS 和构建清单。版本变化见 [更新日志](CHANGELOG.md)，发布方式见 [发行约定](docs/releasing.md)。
+
+在项目目录执行 `npm.cmd run test:portable` 可验证当前版本便携包的“关于”版本、启动、新建、保存和退出；`node scripts/portable-smoke.mjs <EXE路径>` 可指定其他程序。验证使用隔离文档库和配置目录。
 
 开发环境需要 Node.js 22 或更高版本、npm 和 Git：
 
@@ -25,6 +34,7 @@ npm.cmd run build
 npm.cmd run test:e2e
 npm.cmd start
 npm.cmd run dist:win
+npm.cmd run test:portable
 ```
 
 首次安装会下载 Electron。如果 npm 禁用依赖安装脚本，可运行 `node node_modules/electron/install.js`。网络较慢时可在当前终端设置 `$env:ELECTRON_MIRROR='https://npmmirror.com/mirrors/electron/'` 后重试。镜像仅用于开发依赖下载，应用本身不需要联网登录。
@@ -38,8 +48,10 @@ npm.cmd run dist:win
 - 图片选中后仍显示，上方路径工具栏可编辑说明和路径，支持复制图片；公式通过独立面板编辑。
 - 连续空白行、UTF-8 BOM 与 Windows CRLF 换行保留；自动保存、撤销重做、查找替换。
 - 标题、表格、列表、任务、引用、代码高亮、图片、链接、公式、内容目录、脚注、高亮、上下标、下划线和颜色。
-- 默认 Windows 文档/NoteMd 文件库，文件菜单可修改路径。文件/文件夹创建、重命名、副本、移动、回收站、复制路径。
-- 拖到条目上/下边缘排序，拖到文件夹中央移入；拖到返回按钮移到上一级。筛选期间先清空筛选再排序。
+- 新用户默认 Windows 文档/NoteMd_Data 文件库；已有用户沿用原路径，文件菜单可修改路径。递归文件树可展开多个层级并显示同级条目。
+- 文件/文件夹支持创建、重命名、副本、回收站、复制路径；“移动到”使用可视化库内目录选择器，禁止越界和移动到自身后代。
+- 同级条目拖到上/下边缘排序，拖到文件夹中央移入；返回按钮选择上一级作为新建位置。筛选期间先清空筛选再排序。
+- 标题应用有序列表保留标题格式；跨段落选区可应用加粗、斜体、删除线、下划线、高亮。代码块插入时可选择常用语言并实时高亮。
 - 粘贴或插入图片存放于同级 `YYYYMMDD-HHmmss-NNN` 目录；自动隐藏资源目录，文档右键可查看。应用内移动/另存为复制图片并改写引用。
 - 浅色、深色、暖纸主题；Ctrl+滚轮分别缩放正文与侧栏。
 - 全窗口一致的主题菜单、Alt 菜单访问、F1 快捷键速览、命令面板、专注模式；HTML/PDF 导出。
@@ -55,7 +67,7 @@ npm.cmd run dist:win
 
 ## 当前边界
 
-这是 0.2 版本。实时模式直接编辑正文和代码，图片/公式/表格使用独立交互节点；保留未修改的混合换行符和空白行。语法不正确的公式显示提示，可通过“编辑公式”修复，软件不会猜改原文。远程图片可复制 Markdown，本地位图可复制像素。图表/Mermaid、插件、云同步、大文件性能优化和系统文件关联尚未实现。支持 UTF-8 Markdown，其他编码请先转换。Windows 包未签商业代码证书。
+当前为 0.3.0。实时模式直接编辑正文和代码，图片/公式/表格使用独立交互节点；保留未修改的混合换行符和空白行。语法不正确的公式显示提示，可通过“编辑公式”修复，软件不会猜改原文。远程图片可复制 Markdown，本地位图可复制像素。图表/Mermaid、插件、云同步、大文件性能优化和系统文件关联尚未实现。支持 UTF-8 Markdown，其他编码请先转换。Windows 包未签商业代码证书。
 
 ## 项目目录
 
@@ -65,7 +77,9 @@ npm.cmd run dist:win
 
 - [产品需求与验收](docs/product-requirements.md)
 - [架构设计](docs/design.md)
-- [0.2 交互设计](docs/interaction-v2.md)
+- [交互设计与反馈修复](docs/interaction-v2.md)
+- [版本更新日志](CHANGELOG.md)
+- [版本与发行约定](docs/releasing.md)
 - [进度与验证记录](docs/progress.md)
 - [使用示例](examples/欢迎使用.md)
 - [第三方许可](THIRD_PARTY_NOTICES.md)

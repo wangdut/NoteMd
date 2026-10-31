@@ -1,6 +1,7 @@
 import { test, expect, _electron as electron, type ElectronApplication, type Page } from '@playwright/test'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
+import { version } from '../../package.json'
 async function launch(source:string){
   const root=await fs.mkdtemp(path.resolve('test-results/interaction-'));await fs.mkdir(path.join(root,'library'));await fs.writeFile(path.join(root,'library','交互测试.md'),source)
   const env:Record<string,string>={...Object.fromEntries(Object.entries(process.env).filter((e):e is [string,string]=>e[1]!==undefined)),NOTEMD_USER_DATA:path.join(root,'profile'),NOTEMD_LIBRARY_PATH:path.join(root,'library')};delete env.ELECTRON_RUN_AS_NODE
@@ -9,6 +10,17 @@ async function launch(source:string){
 }
 async function command(app:ElectronApplication,name:string){await app.evaluate(({BrowserWindow},value)=>BrowserWindow.getAllWindows()[0]!.webContents.send('notemd:command',value),name)}
 async function saved(app:ElectronApplication,page:Page){await command(app,'save');await expect(page.locator('.app-shell')).toHaveAttribute('aria-busy','false');await expect(page.locator('.document-title')).not.toContainText('未保存')}
+
+test('runtime and About dialog match the project release version',async()=>{
+  const {app,page,errors}=await launch('# Version check')
+  try {
+    expect(await app.evaluate(({app})=>app.getVersion())).toBe(version)
+    await command(app,'about')
+    await expect(page.getByRole('dialog',{name:'关于 NoteMd'})).toContainText('NoteMd '+version)
+    await page.getByRole('button',{name:'确定',exact:true}).click()
+    expect(errors).toEqual([])
+  } finally { await app.close() }
+})
 
 test('clicking rendered math keeps formula visible and its position stable', async () => {
   const root = await fs.mkdtemp(path.resolve('test-results/interaction-'))

@@ -1,7 +1,7 @@
 {
   "name": "notemd",
   "productName": "NoteMd",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "A thoughtful, local-first Markdown editor",
   "author": "NoteMd contributors",
   "license": "MIT",
@@ -16,7 +16,8 @@
     "test:e2e": "playwright test",
     "check": "tsc --noEmit",
     "pack": "npm run build && electron-builder --dir",
-    "dist:win": "npm run build && electron-builder --win portable"
+    "dist:win": "npm run build && electron-builder --win portable --x64 && node scripts/release-metadata.mjs",
+    "test:portable": "node scripts/portable-smoke.mjs"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.0",
@@ -54,7 +55,7 @@
     "appId": "org.notemd.desktop",
     "productName": "NoteMd",
     "directories": {
-      "output": "release"
+      "output": "release/NoteMd-${version}"
     },
     "files": [
       "dist/**/*",
