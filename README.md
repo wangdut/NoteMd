@@ -4,6 +4,13 @@ MIT 开源的 Windows Markdown 桌面编辑器。默认目录侧栏，单窗格�
 
 ## 运行
 
+从 [GitHub Release：NoteMd 0.3.0](https://github.com/wangdut/NoteMd/releases/tag/v0.3.0) 下载 Windows x64 程序，下面两种任选一种：
+
+- [单文件便携版 EXE](https://github.com/wangdut/NoteMd/releases/download/v0.3.0/NoteMd-0.3.0-x64.exe)：下载后直接双击。
+- [目录免安装版 ZIP](https://github.com/wangdut/NoteMd/releases/download/v0.3.0/NoteMd-0.3.0-win-x64.zip)：完整解压后运行 `win-unpacked/NoteMd.exe`。
+
+Release 同时提供 `SHA256SUMS.txt` 与 `release-manifest.json`。GitHub 自动生成的 Source code 是开发源码，不是可直接运行的软件。
+
 当前版本为 **0.3.0**，便携版和目录免安装版统一放在 `release/NoteMd-0.3.0/`，使用相同功能代码。
 
 | 运行形式 | 入口 | 携带方式 |
