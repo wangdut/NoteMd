@@ -63,7 +63,7 @@ test('image paste, hidden assets, rename, move and save-as preserve rendering', 
   await page.getByTitle('新建文件夹').click(); await page.getByRole('textbox', { name: '新建文件夹' }).fill('归档'); await page.getByRole('button', { name: '确定', exact: true }).click()
   await expect(page.locator('.file-row')).toHaveCount(2)
   await page.locator('.file-row').filter({ hasText: '图片笔记.md' }).click({ button: 'right' }); await page.getByRole('button', { name: '移动到…', exact: true }).click()
-  await page.getByRole('textbox', { name: '移动到文件库目录' }).fill('归档'); await page.getByRole('button', { name: '确定', exact: true }).click()
+  await page.getByRole('dialog', { name: '移动到文件库目录' }).getByRole('button', { name: '归档', exact: true }).click(); await page.getByRole('button', { name: '移动到此处', exact: true }).click()
   await expect.poll(() => fs.readFile(path.join(root, 'library', '归档', '图片笔记.md'), 'utf8').catch(() => '')).toContain('![')
   await expect.poll(() => page.locator('.live-block img').evaluate((img: HTMLImageElement) => img.naturalWidth)).toBeGreaterThan(0)
   const destination = path.join(root, 'copy.md')

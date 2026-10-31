@@ -1,4 +1,4 @@
-import type { LibraryEntry, NoteStamp } from '../../main/files'
+import type { LibraryEntry, LibraryTreeEntry, NoteStamp } from '../../main/files'
 
 export interface AppState {
   libraryPath: string
@@ -43,6 +43,7 @@ declare global {
       chooseOpenFile(): Promise<string | null>
       chooseSaveFile(name: string): Promise<string | null>
       list(folder?: string): Promise<LibraryEntry[]>
+      listTree(): Promise<LibraryTreeEntry[]>
       createNote(folder?: string): Promise<OpenNote>
       openNote(relative: string): Promise<OpenNote>
       openExternal(absolute: string): Promise<OpenNote>

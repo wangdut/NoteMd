@@ -44,7 +44,7 @@ function select(view: EditorView, node: HTMLElement, data: NodeSelection, focus 
 }
 export class PreviewWidget extends WidgetType {
   constructor(readonly source: string, readonly from: number, readonly identifier: string, readonly kind: string, readonly readOnly = false, readonly allSource = source) { super() }
-  eq(other: PreviewWidget) { return this.source === other.source && this.from === other.from && this.identifier === other.identifier && this.kind === other.kind && this.readOnly === other.readOnly && (this.kind !== 'paragraph' || this.allSource === other.allSource) }
+  eq(other: PreviewWidget) { return this.source === other.source && this.identifier === other.identifier && this.kind === other.kind && this.readOnly === other.readOnly }
   toDOM(view: EditorView): HTMLElement {
     const node = document.createElement(this.kind === 'inline-math' || this.kind === 'image' ? 'span' : 'div')
     node.className = 'live-block markdown-body preview-node node-' + this.kind

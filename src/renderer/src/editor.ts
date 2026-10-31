@@ -70,9 +70,11 @@ export function createMarkdownEditor(
 export function wrapSelection(view: EditorView, before: string, after = before, placeholder = '文本'): void {
   const selection = view.state.selection.main
   const selected = selection.empty ? placeholder : view.state.sliceDoc(selection.from, selection.to)
+  const insert = selection.empty ? before + selected + after : selected.split(/(\r?\n)/).map(part => /^\r?\n$/.test(part) ? part : part.trim() ? before + part + after : part).join('')
+  const beforeLength = selection.empty ? before.length : insert.indexOf(before) + before.length
   view.dispatch({
-    changes: { from: selection.from, to: selection.to, insert: before + selected + after },
-    selection: { anchor: selection.from + before.length, head: selection.from + before.length + selected.length },
+    changes: { from: selection.from, to: selection.to, insert },
+    selection: { anchor: selection.from + beforeLength, head: selection.from + beforeLength + selected.length },
     scrollIntoView: true,
   })
   view.focus()
@@ -84,8 +86,11 @@ export function insertAtLine(view: EditorView, prefix: string, suffix = ''): voi
   const lines = []
   for (let n = first.number; n <= last.number; n++) {
     const line = view.state.doc.line(n); const indent = line.text.match(/^\s*/)?.[0] ?? ''
-    const text = line.text.slice(indent.length).replace(/^(?:#{1,6} |>[ ]?|[-+*] (?:\[[ xX]\] )?|\d+[.)] )/, '')
-    lines.push(indent + (prefix === '1. ' ? (n - first.number + 1) + '. ' : prefix) + text + suffix)
+    const source = line.text.slice(indent.length)
+    const heading = source.match(/^(#{1,6}\s+)/)?.[0] ?? ''
+    const text = source.slice(heading.length).replace(/^(?:>[ ]?|[-+*] (?:\[[ xX]\] )?|\d+[.)] )/, '')
+    const marker = prefix === '1. ' ? (n - first.number + 1) + '. ' : prefix
+    lines.push(indent + marker + heading + text + suffix)
   }
   const insert = lines.join('\n')
   view.dispatch({

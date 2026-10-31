@@ -3,7 +3,7 @@ import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { RecoveryStore } from './recovery.js'
-import { copyNote, libraryItemPath, managedAssetFolders, createNote, createFolder, importImages, listLibrary, moveEntry, readNote, renameEntry, reorderEntries, resolveImageDataUrl, saveNote } from './files.js'
+import { copyNote, libraryItemPath, managedAssetFolders, createNote, createFolder, importImages, listLibrary, listLibraryTree, moveEntry, readNote, renameEntry, reorderEntries, resolveImageDataUrl, saveNote } from './files.js'
 
 if (process.env.NOTEMD_USER_DATA) app.setPath('userData', path.resolve(process.env.NOTEMD_USER_DATA))
 const here = path.dirname(fileURLToPath(import.meta.url))
@@ -13,7 +13,7 @@ const approvedSaveStamps = new Map<string, { hash: string; exists: boolean }>()
 let recovery: RecoveryStore
 let preferenceQueue: Promise<unknown> = Promise.resolve()
 interface Preferences { libraryPath: string; theme: 'light' | 'dark' | 'paper'; editorZoom: number; tocZoom: number; sidebarWidth: number; sidebar: 'toc' | 'files' }
-const defaults = (): Preferences => ({ libraryPath: process.env.NOTEMD_LIBRARY_PATH || path.join(app.getPath('documents'), 'NoteMd'), theme: 'light', editorZoom: 100, tocZoom: 100, sidebarWidth:258, sidebar: 'toc' })
+const defaults = (): Preferences => ({ libraryPath: process.env.NOTEMD_LIBRARY_PATH || path.join(app.getPath('documents'), 'NoteMd_Data'), theme: 'light', editorZoom: 100, tocZoom: 100, sidebarWidth:258, sidebar: 'toc' })
 function applyWindowTheme(theme: Preferences['theme']) {
   nativeTheme.themeSource = theme === 'dark' ? 'dark' : 'light'
   const color = theme === 'dark' ? '#17242e' : theme === 'paper' ? '#faf5e9' : '#ffffff'
@@ -141,6 +141,7 @@ function setupIpc(): void {
     return result
   })
   ipcMain.handle('notemd:list', async (_event, folder: string) => listLibrary((await preferences()).libraryPath, folder))
+  ipcMain.handle('notemd:list-tree', async () => listLibraryTree((await preferences()).libraryPath))
   ipcMain.handle('notemd:create-note', async (_event, folder: string) => createNote((await preferences()).libraryPath, folder))
   ipcMain.handle('notemd:read-note', async (_event, relative: string) => readNote((await preferences()).libraryPath, relative))
   ipcMain.handle('notemd:read-external', async (_event, absolute: string) => {

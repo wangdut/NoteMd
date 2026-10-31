@@ -102,3 +102,40 @@ test('multiline lists, empty item exit, indentation and table undo survive save'
     expect(errors).toEqual([])
   }finally{await app.close()}
 })
+
+test('ordered list keeps heading markup and formats multiline selections',async()=>{
+  const {app,page,root,errors}=await launch('# 一级标题\n\n普通段落第一行\n普通段落第二行')
+  try{
+    await page.locator('.cm-line').filter({hasText:'一级标题'}).click();await page.keyboard.press('Home');await page.keyboard.press('Control+Shift+7');await saved(app,page)
+    expect(await fs.readFile(path.join(root,'library','交互测试.md'),'utf8')).toContain('1. # 一级标题');await expect(page.locator('.cm-line.live-h1')).toContainText('一级标题')
+    await page.keyboard.press('Control+End');await page.keyboard.press('Shift+Home');await page.keyboard.press('Shift+ArrowUp');await page.keyboard.press('Control+b');await saved(app,page)
+    const source=await fs.readFile(path.join(root,'library','交互测试.md'),'utf8');expect(source).toContain('**普通段落第一行**');expect(source).toContain('**普通段落第二行**')
+    await page.keyboard.press('Control+z');await page.keyboard.press('Control+i');await saved(app,page);expect(await fs.readFile(path.join(root,'library','交互测试.md'),'utf8')).toContain('*普通段落第一行*')
+    expect(errors).toEqual([])
+  }finally{await app.close()}
+})
+
+test('code language picker highlights common keywords',async()=>{
+  const {app,page,root,errors}=await launch('代码测试\n\n')
+  try{
+    await page.locator('.cm-content').click();await page.keyboard.press('Control+End');await page.keyboard.press('Control+Shift+C');await page.getByRole('combobox',{name:'编程语言'}).selectOption('python');await page.getByRole('textbox',{name:'初始代码'}).fill('def greet(name):\n    return "你好 " + name');await page.getByRole('button',{name:'应用',exact:true}).click();await expect(page.locator('.live-code-line .hljs-keyword').first()).toContainText('def');await expect(page.locator('.live-code-line .hljs-string').first()).toContainText('你好');await saved(app,page)
+    expect(await fs.readFile(path.join(root,'library','交互测试.md'),'utf8')).toContain('```python');await expect(page.locator('.code-fence').first()).not.toContainText('```python');expect(errors).toEqual([])
+  }finally{await app.close()}
+})
+
+test('expanded tree shows sibling levels and move uses a bounded folder picker',async()=>{
+  const root=await fs.mkdtemp(path.resolve('test-results/tree-'));await fs.mkdir(path.join(root,'library','一级','二级'),{recursive:true});await fs.mkdir(path.join(root,'library','并列'),{recursive:true});await fs.writeFile(path.join(root,'library','根文档.md'),'root');await fs.writeFile(path.join(root,'library','一级','一级文档.md'),'one');await fs.writeFile(path.join(root,'library','一级','二级','二级文档.md'),'two');await fs.writeFile(path.join(root,'library','并列','并列文档.md'),'sibling')
+  const env:Record<string,string>={...Object.fromEntries(Object.entries(process.env).filter((e):e is [string,string]=>e[1]!==undefined)),NOTEMD_USER_DATA:path.join(root,'profile'),NOTEMD_LIBRARY_PATH:path.join(root,'library')};delete env.ELECTRON_RUN_AS_NODE;const app=await electron.launch({executablePath:process.env.NOTEMD_TEST_EXECUTABLE,args:process.env.NOTEMD_TEST_EXECUTABLE?[]:['.'],env});const page=await app.firstWindow();const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message))
+  try{
+    await page.getByRole('button',{name:'文件库',exact:true}).click();await expect(page.locator('.tree-row')).toHaveCount(7);for(const name of ['根文档.md','一级','一级文档.md','二级','二级文档.md','并列','并列文档.md']) await expect(page.locator('.tree-row .file-name').getByText(name,{exact:true})).toHaveCount(1)
+    await page.locator('.tree-row').filter({hasText:'根文档.md'}).click({button:'right'});await page.getByRole('button',{name:'移动到…',exact:true}).click();await expect(page.getByRole('dialog',{name:'移动到文件库目录'})).toBeVisible();await expect(page.getByRole('button',{name:'二级',exact:true})).toBeVisible();await expect(page.getByText('库外路径不可选')).toBeVisible();await page.getByRole('button',{name:'二级',exact:true}).click();await page.getByRole('button',{name:'移动到此处',exact:true}).click();await expect.poll(()=>fs.readFile(path.join(root,'library','一级','二级','根文档.md'),'utf8').catch(()=>'' )).toBe('root');expect(errors).toEqual([])
+  }finally{await app.close()}
+})
+
+test('typing above an image does not recreate its preview widget',async()=>{
+  const {app,page,errors}=await launch('上方文字\n\n![图](missing.png)\n\n下方文字')
+  try{
+    const image=page.locator('.node-image');await expect(image).toBeVisible();await page.evaluate(()=>{(window as any).__imageMutations=0;const target=document.querySelector('.node-image')!;new MutationObserver(records=>{for(const record of records)for(const node of record.removedNodes)if((node as HTMLElement).classList?.contains('node-image'))(window as any).__imageMutations++}).observe(target.parentElement!,{childList:true})})
+    await page.locator('.cm-line').filter({hasText:'上方文字'}).click();await page.keyboard.press('End');await page.keyboard.insertText(' 输入一点文字');await page.keyboard.insertText(' 继续');await expect.poll(()=>page.evaluate(()=> (window as typeof window & { __imageMutations?: number }).__imageMutations)).toBe(0);await expect(image).toBeVisible();expect(errors).toEqual([])
+  }finally{await app.close()}
+})

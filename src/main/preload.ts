@@ -19,6 +19,7 @@ contextBridge.exposeInMainWorld('noteMd', {
   chooseOpenFile: () => ipcRenderer.invoke('notemd:open-file'),
   chooseSaveFile: (name: string) => ipcRenderer.invoke('notemd:save-file', name),
   list: (folder = '') => ipcRenderer.invoke('notemd:list', folder),
+  listTree: () => ipcRenderer.invoke('notemd:list-tree'),
   createNote: (folder = '') => ipcRenderer.invoke('notemd:create-note', folder),
   openNote: (relative: string) => ipcRenderer.invoke('notemd:read-note', relative),
   openExternal: (absolute: string) => ipcRenderer.invoke('notemd:read-external', absolute),

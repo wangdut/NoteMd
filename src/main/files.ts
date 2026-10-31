@@ -5,6 +5,7 @@ import { Lexer } from 'marked'
 
 export interface NoteStamp { hash: string; exists: boolean }
 export interface LibraryEntry { name: string; path: string; kind: 'file' | 'folder'; modifiedAt: number; size?: number }
+export interface LibraryTreeEntry extends LibraryEntry { children?: LibraryTreeEntry[] }
 
 const ASSET_FOLDER = /^\d{8}-\d{6}-\d{3}$/
 const MARKDOWN_EXTENSIONS = new Set(['.md', '.markdown', '.mdown'])
@@ -102,6 +103,17 @@ export async function listLibrary(rootPath: string, relative = ''): Promise<Libr
   const ranks = new Map(order.map((name, index) => [name, index]))
   return entries.sort((a, b) => (ranks.get(a.name) ?? Number.MAX_SAFE_INTEGER) - (ranks.get(b.name) ?? Number.MAX_SAFE_INTEGER)
     || (a.kind === b.kind ? a.name.localeCompare(b.name, 'zh-CN') : a.kind === 'folder' ? -1 : 1))
+}
+
+export async function listLibraryTree(rootPath: string): Promise<LibraryTreeEntry[]> {
+  const root = await ensureLibrary(rootPath)
+  async function walk(relative: string): Promise<LibraryTreeEntry[]> {
+    const entries = await listLibrary(root, relative)
+    return Promise.all(entries.map(async entry => entry.kind === 'folder'
+      ? { ...entry, children: await walk(entry.path) }
+      : entry))
+  }
+  return walk('')
 }
 
 async function atomicWrite(target: string, content: string | Buffer, exclusive = false): Promise<void> {

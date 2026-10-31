@@ -1,6 +1,7 @@
 import { Compartment, EditorState, StateEffect, StateField, type Range } from '@codemirror/state'
 import { Decoration, EditorView, type DecorationSet } from '@codemirror/view'
 import { Lexer, type Token } from 'marked'
+import hljs from 'highlight.js/lib/common'
 import { blocks, markdown, renderMarkdown } from './markdown'
 import { PreviewWidget, MarkerWidget, clearNode } from './nodes'
 
@@ -11,7 +12,20 @@ const editable = new Compartment()
 export function liveRendering(identifier: string) {
   const field = StateField.define<DecorationSet>({
     create: state => build(state),
-    update: (value, tr) => tr.docChanged || tr.effects.some(e => e.is(changeMode)) ? build(tr.state) : value,
+    update: (value, tr) => {
+      if (tr.effects.some(e => e.is(changeMode))) return build(tr.state)
+      if (!tr.docChanged) return value
+      let canMap = true
+      const inserted: string[] = []
+      tr.changes.iterChangedRanges((fromA, toA, fromB, toB) => {
+        inserted.push(tr.state.sliceDoc(fromB, toB))
+        value.between(fromA, toA, (_from, _to, decoration) => { if (decoration.spec.widget) canMap = false })
+        const lineText = tr.state.doc.lineAt(Math.min(fromB, tr.state.doc.length)).text
+        if (/^\s*(?:[-+*]|\d+[.)])\s/.test(lineText)) canMap = false
+      })
+      if (canMap && inserted.every(text => !/[`*_~$#!<>\[\]|\n]/.test(text) && !/^\s*(?:[-+*]|\d+[.)])\s/.test(text))) return value.map(tr.changes)
+      return build(tr.state)
+    },
     provide: f => [EditorView.decorations.from(f), EditorView.atomicRanges.of(view => {
       const atoms: Range<Decoration>[] = []; view.state.field(f).between(0, view.state.doc.length, (from,to,value) => { if (value.spec.widget || value.spec.isHidden) atoms.push(value.range(from,to)) }); return Decoration.set(atoms, true)
     })],
@@ -41,6 +55,17 @@ export function liveRendering(identifier: string) {
       if (block.type === 'table' || /math|equation/i.test(block.type) || block.source.toUpperCase() === '[TOC]' || block.type === 'hr') { preview(block.from, block.to, /math|equation/i.test(block.type) ? 'math' : block.type, true); continue }
       if (block.type === 'code') {
         const first = state.doc.lineAt(block.from), last = state.doc.lineAt(block.to); const fenced = /^\s*(`{3,}|~{3,})/.test(first.text)
+        const language=fenced?(first.text.match(/^\s*(?:`{3,}|~{3,})\s*([\w+-]+)/)?.[1]??''):''
+        const code=Array.from({length:last.number-first.number+1},(_,i)=>state.doc.line(first.number+i).text).filter((_,i)=>!fenced||i>0&&!(first.number+i===last.number&&/^\s*(?:`{3,}|~{3,})\s*$/.test(state.doc.line(first.number+i).text))).join('\n')
+        if(language&&hljs.getLanguage(language)){
+          const fragment=document.createElement('template');fragment.innerHTML=hljs.highlight(code,{language}).value
+          let offset=0
+          const collect=(node:Node,classes:string[])=>{
+            if(node.nodeType===Node.TEXT_NODE){const value=node.textContent??'';let local=0;for(const part of value.split(/(\n)/)){if(part==='\n'){offset++;local+=part.length;continue}if(part){let at=local;for(const match of part.matchAll(/[^\s]+|\s+/g)){const end=at+match[0].length;if(classes.length&&match[0].trim())mark(codeFrom+offset+at,codeFrom+offset+end,{class:classes.join(' ')});at=end}}offset+=part.length;local+=part.length}return}
+            const element=node as HTMLElement;const next=element.nodeType===Node.ELEMENT_NODE?[...classes,...Array.from(element.classList)]:classes;for(const child of [...node.childNodes])collect(child,next)
+          }
+          let codeFrom=first.from+(fenced?first.text.length+1:0);collect(fragment.content,[])
+        }
         for (let n = first.number; n <= last.number; n++) { const line = state.doc.line(n); if (fenced && (n === first.number || (n === last.number && /^\s*(`{3,}|~{3,})\s*$/.test(line.text)))) { lineStyle(line.from, 'code-fence'); hide(line.from, line.to) } else { lineStyle(line.from, 'live-code-line'); if (!fenced && /^ {4}/.test(line.text)) hide(line.from, line.from + 4) } }
         continue
       }
@@ -49,11 +74,11 @@ export function liveRendering(identifier: string) {
         const line = state.doc.line(n); let text = line.text, start = line.from
         const mathStart=text.replace(/^\s*(?:>\s*)+/,'').trim()
         if(mathStart==='$$'){let end=n+1;while(end<=last.number&&state.doc.line(end).text.replace(/^\s*(?:>\s*)+/,'').trim()!=='$$')end++;if(end<=last.number){preview(line.from,state.doc.line(end).to,'math',true);n=end;continue}}
-        const heading = text.match(/^(#{1,6})\s+/)
-        if (heading) { lineStyle(start, 'live-heading live-h' + heading[1]!.length); hide(start, start + heading[0].length); text = text.slice(heading[0].length); start += heading[0].length }
-        const quote = text.match(/^\s*(?:>\s*)+/); if (quote) { lineStyle(line.from, 'live-quote'); hide(start, start + quote[0].length); text = text.slice(quote[0].length); start += quote[0].length }
         const list = text.match(/^(\s*)([-+*]|\d+[.)])\s+(?:\[([ xX])\]\s+)?/)
         if (list) { const end = start + list[0].length; const checked = list[3] !== undefined ? list[3]!.toLowerCase() === 'x' : undefined; const checkAt = start + list[0].lastIndexOf('[') + 1; ranges.push(Decoration.replace({ widget: new MarkerWidget(/^\d/.test(list[2]!) ? list[2]! : '•', checkAt, checked) }).range(start + list[1]!.length, end)); lineStyle(line.from, 'live-list-line'); text = text.slice(list[0].length); start = end }
+        const heading = text.match(/^(#{1,6})\s+/)
+        if (heading) { lineStyle(line.from, 'live-heading live-h' + heading[1]!.length); hide(start, start + heading[0].length); text = text.slice(heading[0].length); start += heading[0].length }
+        const quote = text.match(/^\s*(?:>\s*)+/); if (quote) { lineStyle(line.from, 'live-quote'); hide(start, start + quote[0].length); text = text.slice(quote[0].length); start += quote[0].length }
         walk(lexer.inlineTokens(text), text, start)
         for (const match of text.matchAll(/<(u|span|font|mark)(?:\s[^>]*)?>([\s\S]*?)<\/\1>/g)) {
           const at = start + match.index!; const prefix = match[0].indexOf('>') + 1; hide(at, at + prefix); hide(at + prefix + match[2]!.length, at + match[0].length)

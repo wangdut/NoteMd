@@ -4,12 +4,12 @@ import { BookOpen, Bold, Braces, Code2, FilePlus2, Heading2, Italic, Library, Li
 import type { EditorView } from '@codemirror/view'
 import { undo, redo } from '@codemirror/commands'
 import { openSearchPanel } from '@codemirror/search'
-import type { LibraryEntry } from '../../main/files'
+import type { LibraryEntry, LibraryTreeEntry } from '../../main/files'
 import type { AppState, OpenNote } from './api'
 import { createMarkdownEditor, goToLine, insertAtLine, insertBlock, insertText, wrapSelection } from './editor'
 import { setEditorMode, type EditorMode } from './rendering'
 import { listHeadings, renderMarkdown, words } from './markdown'
-import { ContextMenu, EmptyState, FilesPanel, TocPanel } from './panels'
+import { ContextMenu, EmptyState, FilesPanel, FolderPicker, TocPanel } from './panels'
 import { DocumentSession } from './session'
 import { allCommands, shortcutCommand, commandById } from './commands'
 import { MenuBar, CommandMenu, editorContextCommands, Shortcuts } from './menus'
@@ -27,6 +27,7 @@ const isExternal = (p: string) => /^[a-z]:|^\\\\|^\//i.test(p)
 export default function App(): JSX.Element {
   const [settings, setSettings] = useState<AppState | null>(null)
   const [entries, setEntries] = useState<LibraryEntry[]>([])
+  const [libraryTree,setLibraryTree]=useState<LibraryTreeEntry[]>([])
   const [folder, setFolder] = useState('')
   const [identifier, setIdentifier] = useState('')
   const [revision, setRevision] = useState(0)
@@ -46,6 +47,7 @@ export default function App(): JSX.Element {
   const [palette, setPalette] = useState(false)
   const [contextMenu, setContextMenu] = useState<MenuState>(null)
   const [modal, setModal] = useState<ModalState | null>(null)
+  const [moveRequest,setMoveRequest]=useState<{item:LibraryEntry;destination:string}|null>(null)
   const [editorDialog,setEditorDialog] = useState<EditorDialogState | null>(null)
   const [showShortcuts,setShowShortcuts] = useState(false)
   const [bodyMenu,setBodyMenu] = useState<{x:number;y:number;kind?:string}|null>(null)
@@ -72,7 +74,7 @@ export default function App(): JSX.Element {
     actionQueue.current = task
     await task
   }
-  async function refresh(parent = folder) { setEntries(await window.noteMd.list(parent)) }
+  async function refresh(parent = folder) { const [next,tree]=await Promise.all([window.noteMd.list(parent),window.noteMd.listTree()]);setEntries(next);setLibraryTree(tree) }
   async function preference(key: string, value: unknown) { setSettings(await window.noteMd.setPreference(key, value)) }
   function ask(title: string, initial?: string, message?: string): Promise<string | null> { return new Promise(resolve => setModal({ title, initial, message, resolve })) }
   async function flush() {
@@ -147,6 +149,7 @@ export default function App(): JSX.Element {
     if (command === 'palette') setPalette(true)
     else if (command === 'shortcuts') setShowShortcuts(true)
     else if (command === 'rename-current') await renameCurrent()
+    else if (view && mode !== 'read' && command === 'codeblock') setEditorDialog({type:'code',apply:(language:string,code?:string)=>insertBlock(view,'```'+language+'\n'+(code??'')+'\n```')})
     else if (['cut','copy','paste','select-all'].includes(command)) {
       if(!view)return; const node=selectedNode(view)
       if(command==='copy'&&node?.kind==='image'){const token=markdown.lexer(node.source)[0] as any;const image=token?.tokens?.find((t:any)=>t.type==='image');if(image)await window.noteMd.copyImage(identifier,image.href);return}
@@ -212,7 +215,7 @@ export default function App(): JSX.Element {
     if (action === 'duplicate') { await flush(); await window.noteMd.duplicate(item.path); await refresh() }
     if (action === 'copy-path') { await window.noteMd.copyPath(item.path); setStatus('路径已复制') }
     if (action === 'rename') { const name = await ask('重命名', item.name); if (name && name !== item.name) await relocate(item, name, true) }
-    if (action === 'move') { const destination = await ask('移动到文件库目录', '', '输入相对目录，例如：课程/第一周。留空表示根目录。'); if (destination !== null) await relocate(item, destination) }
+    if (action === 'move') setMoveRequest({item,destination:item.path.split('/').slice(0,-1).join('/')})
     if (action === 'trash') {
       const result = await ask('移到回收站', undefined, '确定将「' + item.name + '」移到系统回收站？图片目录保留，避免影响其他文档。')
       if (result === null) return
@@ -279,9 +282,10 @@ export default function App(): JSX.Element {
     <header className="app-header"><div className="brand-lockup"><img className="brand-icon" src={logo} alt="NoteMd" /><div><strong>NoteMd</strong><span>LOCAL / MARKDOWN</span></div></div><div className="document-title" role="button" tabIndex={0} title="双击重命名文档 · F2" onDoubleClick={()=>void commandRef.current('rename-current')} onKeyDown={e=>{if(e.key==='Enter')void commandRef.current('rename-current')}}><i className={dirty ? 'dirty-dot' : 'saved-dot'} />{activeName}{dirty ? ' · 未保存' : ''}</div><div className="header-actions"><button className="icon-button" title="查找正文" onClick={() => void commandRef.current('find')}><Search size={17} /></button><button className="icon-button" title="切换侧栏" onClick={() => setSidebar(value => value === 'toc' ? 'files' : 'toc')}><PanelLeft size={17} /></button><button className="icon-button" title="切换主题" onClick={() => void commandRef.current('theme-' + (theme === 'light' ? 'dark' : theme === 'dark' ? 'paper' : 'light'))}><Sparkles size={17} /></button><button className="save-button" disabled={!identifier || busy} onClick={() => void commandRef.current('save')}><Save size={15} />保存</button></div></header>
     <div className="command-strip"><div className="command-group" onMouseDown={e=>e.preventDefault()}>{([[ 'new', '新建文档', FilePlus2 ], ['undo', '撤销', Undo2], ['redo', '重做', Redo2], ['bold', '加粗', Bold], ['italic', '斜体', Italic], ['heading-2', '标题', Heading2], ['codeblock', '代码块', Code2], ['ordered-list', '有序列表', ListOrdered], ['bullet-list', '无序列表', List], ['color', '字体颜色', Palette], ['task-list', '任务列表', ListChecks], ['table', '表格', Table2], ['link', '链接', Link2]] as const).map(([key, title, Icon]) => <button key={key} title={title+(commandById.get(key)?.shortcut?' · '+commandById.get(key)!.shortcut:'')} onClick={() => void commandRef.current(key)}><Icon size={16} /></button>)}</div><div className="mode-switcher">{([['live', '实时', Code2], ['source', '源码', Braces], ['read', '阅读', BookOpen]] as const).map(([key, label, Icon]) => <button key={key} className={mode === key ? 'active' : ''} onClick={() => setMode(key)}><Icon size={14} />{label}</button>)}</div></div>
     {error && <div className="error-banner" role="alert"><span>{error}</span><button onClick={() => void commandRef.current('save-as')}>另存副本</button><button onClick={() => void run(async () => { if (await ask('重新加载', undefined, '放弃当前未保存编辑，重新读取磁盘？') !== null && session.current) { const p = session.current.identifier; adopt(p, await (isExternal(p) ? window.noteMd.openExternal(p) : window.noteMd.openNote(p))) } })}>重新加载</button><button aria-label="关闭提示" onClick={() => setError('')}><X size={15} /></button></div>}
-    <main className="workspace">{!focusMode && <aside className="sidebar" ref={sidebarHost} style={{width:sidebarWidth}}><div className="sidebar-tabs"><button className={sidebar === 'toc' ? 'active' : ''} onClick={() => setSidebar('toc')}>目录</button><button className={sidebar === 'files' ? 'active' : ''} onClick={() => setSidebar('files')}><Library size={15} />文件库</button></div>{sidebar === 'toc' ? <TocPanel activeLine={cursorLine} headings={headings} onSelect={line => { if (editor.current) goToLine(editor.current, line) }} /> : <><input className="library-search" placeholder="筛选当前目录…" aria-label="筛选文件" value={searchText} onChange={e => setSearchText(e.target.value)} /><FilesPanel folder={folder} entries={filtered} active={identifier} onFolder={p => { setFolder(p); void run(() => refresh(p)) }} onOpen={item => { if (item.kind === 'folder') { setFolder(item.path); void run(() => refresh(item.path)) } else void run(() => openNote(item.path)) }} onContext={(event, item) => { event.preventDefault(); setContextMenu({ x: Math.min(event.clientX, innerWidth - 240), y: Math.min(event.clientY, innerHeight - 370), item }) }} onNew={() => void commandRef.current('new')} onNewFolder={() => void commandRef.current('new-folder')} onUp={() => { const p = folder.split('/').slice(0, -1).join('/'); setFolder(p); void run(() => refresh(p)) }} onMove={(item, destination) => run(() => relocate(item, destination))} onReorder={names => run(async () => { if (searchText) throw new Error('清空筛选后再排序'); await window.noteMd.reorder(folder, names); await refresh() })} /></>}</aside>}
+    <main className="workspace">{!focusMode && <aside className="sidebar" ref={sidebarHost} style={{width:sidebarWidth}}><div className="sidebar-tabs"><button className={sidebar === 'toc' ? 'active' : ''} onClick={() => setSidebar('toc')}>目录</button><button className={sidebar === 'files' ? 'active' : ''} onClick={() => setSidebar('files')}><Library size={15} />文件库</button></div>{sidebar === 'toc' ? <TocPanel activeLine={cursorLine} headings={headings} onSelect={line => { if (editor.current) goToLine(editor.current, line) }} /> : <><input className="library-search" placeholder="筛选当前目录树…" aria-label="筛选文件" value={searchText} onChange={e => setSearchText(e.target.value)} /><FilesPanel folder={folder} tree={libraryTree.filter(item=>!searchText||item.name.toLowerCase().includes(searchText.toLowerCase()))} active={identifier} onFolder={p => { setFolder(p); void run(() => refresh(p)) }} onOpen={item => void run(() => openNote(item.path))} onContext={(event, item) => { event.preventDefault(); setContextMenu({ x: Math.min(event.clientX, innerWidth - 240), y: Math.min(event.clientY, innerHeight - 370), item }) }} onNew={() => void commandRef.current('new')} onNewFolder={() => void commandRef.current('new-folder')} onUp={() => { const p = folder.split('/').slice(0, -1).join('/'); setFolder(p); void run(() => refresh(p)) }} onMove={(item, destination) => run(() => relocate(item, destination))} onReorder={(parent,names) => run(async () => { if (searchText) throw new Error('清空筛选后再排序'); await window.noteMd.reorder(parent, names); await refresh(parent) })} /></>}</aside>}
     <div className={focusMode?'sidebar-resizer hidden':'sidebar-resizer'} role="separator" aria-label="调整侧栏宽度" aria-orientation="vertical" aria-valuemin={180} aria-valuemax={520} aria-valuenow={sidebarWidth} tabIndex={0} onPointerDown={startResize} onDoubleClick={()=>resizeSidebar(258,true)} onKeyDown={e=>{if(e.key==='ArrowLeft'||e.key==='ArrowRight'){e.preventDefault();resizeSidebar(sidebarWidth+(e.key==='ArrowLeft'?-10:10),true)}}} />
     {contextMenu && <ContextMenu menu={contextMenu} onClose={() => setContextMenu(null)} onAction={action => { const item = contextMenu.item; setContextMenu(null); void run(() => contextAction(action, item)) }} />}
+    {moveRequest&&<div className="modal-backdrop"><section className="modal move-dialog" role="dialog" aria-modal="true" aria-label="移动到文件库目录"><h2>移动到文件库目录</h2><FolderPicker tree={libraryTree} selected={moveRequest.destination} onSelect={destination=>setMoveRequest(current=>current?{...current,destination}:null)}/><div className="modal-actions"><button onClick={()=>setMoveRequest(null)}>取消</button><button className="primary" onClick={()=>{const {item,destination}=moveRequest;setMoveRequest(null);if(destination===item.path||item.kind==='folder'&&destination.startsWith(item.path+'/')){report(new Error('不能把文件夹移动到自身或其下级目录。'));return}void run(()=>relocate(item,destination))}}>移动到此处</button></div></section></div>}
     <section className="editor-area"><div className="editor-breadcrumb"><span title={settings?.libraryPath}>{settings?.libraryPath ?? 'NoteMd 文档库'}</span><span>{folder}</span><span className="breadcrumb-spacer" /><span className="save-state" title={status} role="status">{busy ? '正在处理…' : status}</span></div><div className={'editor-grid mode-' + mode}><div className="source-pane"><div ref={editorHost} className="editor-host" onContextMenu={event=>{event.preventDefault();setBodyMenu({x:Math.max(4,Math.min(event.clientX,innerWidth-300)),y:Math.max(4,Math.min(event.clientY,innerHeight-560)),kind:editor.current?selectedNode(editor.current)?.kind:undefined})}} /></div>{!identifier && <EmptyState onNew={() => void commandRef.current('new')} onOpen={() => void commandRef.current('open')} />}</div><footer className="status-bar"><span>{words(content)} 字</span><span>{content.split('\n').length} 行</span><span>{editorZoom}%</span><span className="status-spacer" /><span>UTF-8</span><span>Markdown</span></footer></section></main>
     {drafts.length > 0 && <div className="recovery-panel" role="region" aria-label="恢复草稿"><strong>发现未保存的恢复草稿</strong>{drafts.map(d => <button key={d.id} onClick={() => void run(async () => { await flush(); const note = await window.noteMd.recover(d.id); adopt(note.path, note, true); setDrafts(list => list.filter(item => item.id !== d.id)) })}>恢复 {baseName(d.path)}</button>)}<button onClick={() => setDrafts([])}>稍后处理</button></div>}
     <button className="command-palette-trigger" title="命令面板" onClick={() => setPalette(true)}><Menu size={16} /></button>
